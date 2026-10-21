@@ -128,7 +128,9 @@ TRIM_EDGES = ToolDefinition(
         "按绝对时间点裁剪：保留 [开头时间, 结尾时间) 之间的内容。\n"
         "  · 开头时间：该时间点之前的内容被删除\n"
         "  · 结尾时间：该时间点之后的内容被删除（留空或填 结尾 =到视频结尾）\n"
-        "TS 中间流无损裁剪，不重编码。输出: {原名}_trim_edges.mp4"
+        "  · 快速无损：TS 中间流流复制，秒级完成，切点对齐关键帧\n"
+        "  · AMD 硬件加速：AMF 重编码，帧级精确\n"
+        "输出: {原名}_trim_edges.mp4"
     ),
     specs=[
         ParamSpec(
@@ -162,6 +164,18 @@ TRIM_EDGES = ToolDefinition(
             required=False,
             help="留空=输出到输入同目录；文件夹模式可指定为输出文件夹",
         ),
+        ParamSpec(
+            name="mode",
+            label="裁剪模式",
+            kind="choice",
+            default="fast",
+            choices=[
+                ("快速无损（TS 流 copy，秒级完成）", "fast"),
+                ("AMD 硬件加速（AMF 重编码，帧级精确）", "amd"),
+            ],
+            help="快速模式切点对齐关键帧；AMD 模式帧级精确，可指定质量与码率",
+        ),
+        *amd_specs(),
     ],
     runner=trim_edges,
 )

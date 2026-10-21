@@ -109,6 +109,14 @@ def main():
         check("trim 时长 ≈ 6s", 5.0 < d < 7.5, f"(实际 {d:.2f}s)")
         check("trim 命名 _trim_edges", "_trim_edges" in r.outputs[0])
 
+    if check_amf_support():
+        r = trim_edges(src1, start="2", end="8", mode="amd",
+                       output=os.path.join(WORK, "a_amd.mp4"), ctx=mkctx())
+        check("trim_edges AMD 模式成功", r.success, r.message)
+        if os.path.exists(os.path.join(WORK, "a_amd.mp4")):
+            d = duration_of(os.path.join(WORK, "a_amd.mp4"))
+            check("trim AMD 时长 ≈ 6s", 5.0 < d < 7.5, f"(实际 {d:.2f}s)")
+
     # ---------- 3. batch_trim ----------
     print("\n[3] 批量裁剪（时长语义，切开头2s + 结尾2s）")
     from video_process.tools.batch_trim import batch_trim

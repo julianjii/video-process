@@ -5,8 +5,9 @@
     trim_edges:    参数是**绝对时间点** —— 保留 [start_time, end_time)
     batch_trim:    参数是**切掉的时长** —— 切掉开头 X 秒、结尾 Y 秒
 
-实现：先无损转 TS 容器（mp4toannexb），再在 TS 上精确 seek 裁剪，
-避免直接在 MP4 上 copy 裁剪导致的开头黑屏/时间戳错乱。
+两种裁剪模式（与「批量裁剪」「片段删除」一致）：
+    fast: 转 TS 中间流后 copy 裁剪（无损、秒级完成，切点对齐关键帧）
+    amd:  AMD AMF 硬件重编码（帧级精确，可指定质量预设与码率；音频仍为 copy）
 """
 
 from __future__ import annotations
@@ -14,6 +15,7 @@ from __future__ import annotations
 import os
 from typing import List, Optional
 
+from ..core.amf import build_encode_args, require_amf
 from ..core.ffmpeg import FFmpegRunner
 from ..core.models import TaskResult, ToolContext, ToolError
 from ..core.paths import (
@@ -36,6 +38,12 @@ def _trim_one(
     start_time: Optional[float],
     end_time: Optional[float],
     output_file: str,
+    mode: str = "fast",
+    quality: str = "balanced",
+    usage: str = "transcoding",
+    bitrate: Optional[int] = None,
+    cqp: bool = False,
+    qp: int = 22,
 ) -> bool:
     """裁剪单个文件，返回是否成功。"""
     ctx = runner.ctx
@@ -63,6 +71,28 @@ def _trim_one(
     input_dir = os.path.dirname(input_file) or "."
     temp_dir = temp_dir_for(input_dir, "trimmed")
     temp_ts = os.path.join(temp_dir, f"{base_name}_temp.ts")
+
+    # AMD 重编码本身就是帧级精确，一步直出，无需 TS 中间流
+    if mode == "amd":
+        try:
+            enc_args = build_encode_args(
+                ctx, input_file, quality=quality, usage=usage,
+                bitrate=bitrate, cqp=cqp, qp=qp,
+            )
+            runner.run(
+                ["ffmpeg", "-y", "-hwaccel", "amf", "-hwaccel_output_format", "d3d11",
+                 "-i", input_file, "-ss", str(start), "-t", str(keep_duration),
+                 *enc_args, "-c:a", "copy",
+                 "-avoid_negative_ts", "make_zero", output_file],
+                duration=keep_duration,
+                description="  AMD 重编码裁剪中...",
+            )
+            return os.path.exists(output_file)
+        except (ToolError, RuntimeError) as exc:
+            ctx.error(f"  裁剪失败: {exc}")
+            return False
+        finally:
+            cleanup_dir(temp_dir)
 
     try:
         # 步骤1: 无损转 TS 容器
@@ -95,6 +125,12 @@ def trim_edges(
     start: str = "0",
     end: str = "",
     output: str = "",
+    mode: str = "fast",
+    quality: str = "balanced",
+    usage: str = "transcoding",
+    bitrate: Optional[int] = None,
+    cqp: bool = False,
+    qp: int = 22,
     ctx: Optional[ToolContext] = None,
 ) -> TaskResult:
     """裁剪视频的开头和结尾。
@@ -104,9 +140,17 @@ def trim_edges(
         start:      开头裁剪时间点（该点之前的内容删除），空/0 表示不裁
         end:        结尾裁剪时间点（该点之后的内容删除），空表示不裁
         output:     输出文件或文件夹，空表示自动命名到同目录
+        mode:       "fast"（TS 无损，切点对齐关键帧）或 "amd"（AMF 重编码，帧级精确）
+        quality/usage/bitrate/cqp/qp: 仅 AMD 模式生效的编码参数
     """
     ctx = ctx or ToolContext()
     runner = FFmpegRunner(ctx)
+
+    if mode == "amd":
+        try:
+            require_amf(ctx)
+        except RuntimeError as exc:
+            return TaskResult(success=False, message=str(exc))
 
     ok, resolved, err = validate_path(input_path)
     if not ok:
@@ -124,12 +168,15 @@ def trim_edges(
     outputs: List[str] = []
     success = 0
     failed = 0
+    ctx.log("裁剪模式: " + ("AMD 硬件加速（AMF 重编码，帧级精确）" if mode == "amd"
+                             else "快速无损（TS 流 copy，切点对齐关键帧）"))
 
     if os.path.isfile(resolved):
         out = output or sibling_path(resolved, DEFAULT_SUFFIX, ".mp4")
         ensure_dir(os.path.dirname(out) or ".")
         ctx.log(f"处理: {os.path.basename(resolved)}")
-        if _trim_one(runner, resolved, start_sec, end_sec, out):
+        if _trim_one(runner, resolved, start_sec, end_sec, out, mode,
+                     quality, usage, bitrate, cqp, qp):
             outputs.append(out)
             success += 1
             ctx.success(f"完成: {out}")
@@ -150,7 +197,8 @@ def trim_edges(
             if out_dir != resolved:
                 out = os.path.join(out_dir, os.path.basename(out))
             ctx.log(f"[{i}/{len(files)}] {os.path.basename(f)}")
-            if _trim_one(runner, f, start_sec, end_sec, out):
+            if _trim_one(runner, f, start_sec, end_sec, out, mode,
+                         quality, usage, bitrate, cqp, qp):
                 outputs.append(out)
                 success += 1
             else:
