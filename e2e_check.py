@@ -312,6 +312,44 @@ def main():
         check("zh_convert 空文本报错", not convert_text("  ").success)
         check("zh_convert 无效配置报错", not convert_text(src, "bogus").success)
 
+    # ---------- 16. 命令行入口 ----------
+    print("\n[16] 命令行入口（CLI）")
+    import contextlib
+    import io
+
+    from video_process import cli
+    from video_process.settings_store import load_settings
+
+    _parser, cli_tools = cli.build_parser(load_settings())
+    check("cli 生成全部子命令", len(cli_tools) == 16, f"实际 {len(cli_tools)} 个")
+    check("cli 不暴露纯界面面板 settings", "settings" not in cli_tools)
+
+    missing = []
+    for tool_id, (definition, sub) in cli_tools.items():
+        help_text = sub.format_help()
+        for spec in definition.specs:
+            flag = "--" + spec.name.replace("_", "-")
+            if flag not in help_text:
+                missing.append(f"{tool_id} {flag}")
+    check("cli 每个参数都进了 --help", not missing, "、".join(missing[:5]))
+
+    out, err = io.StringIO(), io.StringIO()
+    timeline_text = "00:00 开场\n01:00 [广告] 广告内容\n02:00 正片"
+    with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+        code = cli.main(["timeline", "--text", timeline_text])
+    check("cli timeline 退出码 0", code == 0, err.getvalue().strip()[:80])
+    check("cli 结果写 stdout、日志写 stderr",
+          "01:00 正片" in out.getvalue() and "广告区间" in err.getvalue(),
+          out.getvalue().strip())
+
+    with contextlib.redirect_stderr(io.StringIO()):
+        try:
+            cli.main(["no-such-tool"])
+            code = 0
+        except SystemExit as exc:
+            code = exc.code
+    check("cli 未知子命令返回 2", code == 2, f"code={code}")
+
     # ---------- 汇总 ----------
     print("\n" + "=" * 60)
     print(f"通过 {len(PASS)} 项，失败 {len(FAIL)} 项")

@@ -1,8 +1,11 @@
 # 视频处理工具集
 
-基于 [PyQt6](https://www.riverbankcomputing.com/software/pyqt/) 的桌面图形界面（GUI）视频/字幕处理工具集。
+基于 [PyQt6](https://www.riverbankcomputing.com/software/pyqt/) 的视频/字幕处理工具集，同一套功能提供**图形界面**与**命令行**两种用法。
 
-**单一入口**：`python main.py`（启动 PyQt6 图形界面）
+| 入口 | 命令 |
+|---|---|
+| 图形界面 | `python main.py` |
+| 命令行 | `python -m video_process.cli <功能名> [参数]` |
 
 ---
 
@@ -68,6 +71,87 @@ run.bat
 - **粘贴**：在路径框内 `Ctrl+V`，会自动剥离引号、还原 `file://` 形式的路径。
 - **浏览**：点击右侧「浏览」按钮，在**系统原生文件对话框**中选择
   （目录模式 / 按扩展名过滤的文件模式）。
+
+---
+
+## 命令行（CLI）
+
+不启动界面也能跑全部 16 个功能。参数规格与图形界面**共用同一份声明**（`defs/`），
+所以字段名、默认值、取值范围、校验规则完全一致；每个子命令的 `--help` 就是权威说明。
+
+```powershell
+python -m video_process.cli --help                 # 源码运行
+pip install -e . ; video-process-cli --help        # 安装后可省略 python -m
+dist\video-process\视频处理工具集-命令行.exe --help  # 打包后的控制台版
+```
+
+### 子命令
+
+| 子命令 | 功能 | 必填参数 |
+|---|---|---|
+| `merge` | 视频合并 | `--directory` |
+| `trim-edges` | 开头结尾裁剪 | `--input-path` |
+| `batch-trim` | 批量裁剪（切掉固定时长） | `--directory` |
+| `remove-segments` | 片段删除（去广告） | `--input-path` `--segments` |
+| `extract-segments` | 片段提取 | `--input-path` `--segments` |
+| `split` | 视频分割 | `--input-file` `--split-points` |
+| `compress` | 视频压缩 | `--input-path` |
+| `convert` | 转换为 MP4 | `--input-path` |
+| `audio` | 音轨提取（转 MP3） | `--input-path` |
+| `frame` | 视频截图 | `--input-path` |
+| `srt2ass` | SRT 转 ASS | `--input-path` |
+| `srt-remove` | SRT 时间段删除 | `--input-file` `--ranges-spec` |
+| `jianying-subtitle` | 剪映字幕导出 | `--input-path` |
+| `bcut-subtitle` | 必剪字幕导出 | `--input-path` |
+| `timeline` | 时间线计算器 | `--text`（可省略，从标准输入读） |
+| `zh-convert` | 文本繁简转换 | `--text`（同上） |
+
+参数名是把规格里的字段名换成了 kebab 写法（`output_dir` → `--output-dir`），
+布尔开关同时提供 `--xxx` 与 `--no-xxx` 两种写法。
+
+### 全局选项
+
+| 选项 | 说明 |
+|---|---|
+| `-q` / `--quiet` | 只显示警告与错误 |
+| `--overwrite` | 本次允许覆盖已存在的输出（不改写配置文件） |
+| `--version` | 查看版本（放在子命令之前） |
+
+默认值来自 `~/.video-process/config.json`（与界面共用）；「全局设置」面板没有对应的子命令，
+需要改默认值时，在界面里改或用文本编辑器改这个 JSON。
+
+### 输出与退出码
+
+- 日志、进度、结果摘要 → **stderr**
+- 产物路径或纯文本结果 → **stdout**，逐行输出，可直接 `> 结果.txt` 或接管道
+- 退出码：`0` 成功、`1` 执行失败、`2` 参数错误
+- 运行中 `Ctrl+C` 会终止 ffmpeg 进程树并清理半成品
+
+### 示例
+
+```powershell
+# 合并文件夹内所有视频（按文件名排序）
+python -m video_process.cli merge D:\剧集\S01
+
+# 去广告：删除两个时间段，AMD 硬件加速，覆盖已有输出
+python -m video_process.cli remove-segments D:\剧集\01.mp4 `
+    --segments "开头-1:00,5:00-6:00" --mode amd --overwrite
+
+# 每集开头切 15 秒、结尾切 1 分 30 秒，输出到 cut/
+python -m video_process.cli batch-trim D:\录播 --start-cut 15 --end-cut 1:30
+
+# 截图与提音轨（静默模式只报错误）
+python -m video_process.cli frame D:\a.mp4 --time-position 1:30
+python -m video_process.cli audio D:\a.mp4 -q
+
+# 时间线重算：管道进、管道出（结果含广告区间 CSV）
+Get-Content .\timeline.txt | python -m video_process.cli timeline --text - > new.txt
+
+# 繁简转换
+python -m video_process.cli zh-convert --text "软件和鼠标" --conversion s2twp
+```
+
+时间格式（`90` / `1:30` / `1:30:45` / `开头` / `结尾`）与输出命名规则见下文对应章节。
 
 ---
 
@@ -152,21 +236,19 @@ run.bat
 
 ## 架构
 
-四层单向依赖：
+四层单向依赖，界面与命令行是 `defs/` 的两个平级消费者（互不依赖）：
 
 ```
-main.py（源码入口）/ bundle/entry_gui.py（打包入口）
-   ↓
-entry.py（统一初始化）
-   ↓
-ui/app.py                     PyQt6 主窗口
-   ↓ 调用
-defs/                        工具定义：参数规格 + 业务函数（无 UI 依赖）
-   ↓
-tools/                       纯业务逻辑（无 print / input）
-   ↓
-core/                        ffmpeg 执行器 / ffprobe 探测 /
-                             时间解析 / 路径处理 / AMF 参数
+main.py / bundle/entry_gui.py            bundle/entry_cli.py
+   ↓                                        ↓
+entry.py（GUI 初始化）                  cli.py（argparse，自动生成子命令）
+   ↓                                        ↓
+ui/app.py（PyQt6 主窗口） ─────────────→ defs/   工具定义：参数规格 + 业务函数（无 UI 依赖）
+                                            ↓
+tools/                                     纯业务逻辑（无 print / input）
+                                            ↓
+core/                                      ffmpeg 执行器 / ffprobe 探测 /
+                                           时间解析 / 路径处理 / AMF 参数
 ```
 
 ```
@@ -177,6 +259,7 @@ video_process/
 ├── defs/        工具定义层：每个工具一份「参数规格 + 业务函数」，不依赖任何 UI 框架
 ├── ui/          主窗口、通用表单面板、时间线/设置定制面板、
 │                路径选择控件、日志与进度控件、QSS 主题、后台任务执行器
+├── cli.py      命令行入口：按 defs 的规格自动生成子命令（不 import PyQt6）
 ├── param_spec.py   声明式参数规格（ParamSpec / ToolDefinition）
 ├── settings_store.py  全局设置持久化
 ├── entry.py       统一初始化入口（utf-8 控制台 + ffmpeg PATH 注入）
@@ -185,9 +268,10 @@ video_process/
 
 ### 设计要点
 
-- **tools 层不含任何 `print()` / `input()`**，全部通过回调上报，界面是唯一消费者
+- **tools 层不含任何 `print()` / `input()`**，全部通过回调上报，界面与命令行都是消费者
 - **定义与渲染分离**：参数规格与业务函数放在 `defs/`，界面只负责渲染
 - **声明式表单**：`ParamSpec` 驱动界面控件，新增工具只需一份定义加一个业务函数
+- **命令行零重复**：`cli.py` 遍历 `defs.all_tools()` 生成子命令，新增工具自动获得命令行支持
 - **异步执行**：ffmpeg 任务跑在 `QThread` 后台线程，通过信号槽（自动 QueuedConnection）
   回到主线程更新进度条与日志，后台线程绝不直接触碰控件；可随时 `Ctrl+C` 停止
 - **日志抗洪峰**：长任务可能瞬间产生数千行输出，日志区用 100 ms 定时器批量合并写入，
@@ -206,6 +290,9 @@ python e2e_check.py   # 15 个工具端到端真实 ffmpeg 调用（自动生成
 无 AMF 编码器的环境会自动跳过 AMD 相关用例。
 剪映/必剪字幕导出不涉及 ffmpeg，未包含在端到端测试中。
 
+最后一组用例检查命令行版：16 个子命令是否齐全、每条参数是否都进了 `--help`、
+`timeline` 的结果是否只写 stdout、未知子命令是否返回退出码 2（不依赖 ffmpeg）。
+
 ---
 
 ## 打包为可执行程序
@@ -214,9 +301,11 @@ python e2e_check.py   # 15 个工具端到端真实 ffmpeg 调用（自动生成
 **目标机器既不需要安装 Python，也不需要安装 ffmpeg**——二者都随程序一起分发。
 
 ```powershell
-build.bat                    # 单目录模式（推荐）+ 内置 ffmpeg
+build.bat                    # 单目录模式（推荐）+ 内置 ffmpeg，图形界面 + 命令行都打
 python build.py              # 等价命令
 python build.py --onefile    # 单文件模式
+python build.py --targets cli   # 只打命令行版（不含 Qt，体积小，适合单独分发）
+python build.py --targets gui   # 只打图形界面版
 python build.py --clean      # 先清掉上次的构建产物
 python build.py --no-ffmpeg  # 不内置 ffmpeg（改用运行机上的）
 python build.py --ffmpeg-dir C:\sdk\ffmpeg\bin   # 指定用哪份 ffmpeg
@@ -253,11 +342,22 @@ pip install -e ".[build]"
 
 ### 产物
 
-构建产物为单个图形界面程序（单目录模式的 `dist/video-process/` 目录，或单文件模式的单个 exe）：
+默认两个入口一起打（单目录模式输出到 `dist/video-process/`，单文件模式直接输出到 `dist/`）：
 
 | 文件 | 说明 |
 |---|---|
-| `视频处理工具集.exe` | 双击启动，**不弹控制台黑窗**，带应用图标与版本信息 |
+| `视频处理工具集.exe` | 图形界面版，双击启动，**不弹控制台黑窗**，带应用图标与版本信息 |
+| `视频处理工具集-命令行.exe` | 命令行版，带控制台窗口，`视频处理工具集-命令行.exe --help` 查看用法 |
+
+单目录模式下两个 exe 共用同一份依赖（`_internal/`），所以 CLI 版只是多了一个几 MB 的 exe；
+只想分发命令行版时用 `--onefile --targets cli`，产出不含 Qt 的独立单文件（体积小一个数量级）。
+
+命令行版的用法与源码模式完全一致，把 `python -m video_process.cli` 换成 exe 即可：
+
+```powershell
+.\视频处理工具集-命令行.exe merge D:\剧集\S01
+.\视频处理工具集-命令行.exe remove-segments D:\01.mp4 --segments "开头-1:00,5:00-结尾" --overwrite
+```
 
 ### 两种模式怎么选
 
@@ -274,19 +374,26 @@ pip install -e ".[build]"
 ```
 build.py                    构建驱动：检查图标/ffmpeg → 生成版本资源 → 调 spec
 build.bat                   Windows 一键打包
-bundle/video_process.spec   PyInstaller 配置（单入口 + ffmpeg）
+bundle/video_process.spec   PyInstaller 配置（GUI/CLI 两个入口 + ffmpeg）
 bundle/entry_gui.py         图形界面入口（无控制台）
+bundle/entry_cli.py         命令行入口（有控制台）
 bundle/ffmpeg_bins.py       定位并收集 ffmpeg / ffprobe 及其动态库
 bundle/version_info.py      生成 Windows exe 的版本资源
 assets/app.ico              应用图标（自备，缺失时打包仍可正常完成）
 video_process/_frozen.py    资源路径 + 内置 ffmpeg 的 PATH 注入
 video_process/entry.py      统一初始化入口（utf-8 控制台 + ffmpeg PATH 注入）
+video_process/cli.py        命令行实现（按 defs 规格生成子命令）
 ```
+
+`.github/workflows/build.yml` 在打 tag 或手动触发时跑同一套流程，产出两个压缩包：
+`video-process-<版本>-win64.zip`（单目录，GUI + CLI 两个 exe）与
+`video-process-cli-<版本>-win64.zip`（单文件，只有命令行版），并作为 Release 附件上传。
 
 ### 注意事项
 
 - **体积**：内置 ffmpeg 后单目录产物约 480 MB（ffmpeg 本体就占 385 MB）。
   嫌大可以用 `--ffmpeg-dir` 指定一份精简构建，或 `--no-ffmpeg` 干脆不打包。
+  命令行版不含 Qt，`--onefile --targets cli` 的产物就是「ffmpeg + 十几 MB 的 Python 运行时」。
 - **位数要一致**：64 位 Python 打出 64 位 exe，32 位系统请用 32 位 Python 打包。
 - **建议在干净虚拟环境中打包**，否则容易把无关依赖一起打进去，体积膨胀。
 - 界面启动后会像源码模式一样在标题栏检测 ffmpeg 与 AMF 并显示状态芯片。

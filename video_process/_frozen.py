@@ -115,7 +115,9 @@ def prepare_ffmpeg_path() -> List[str]:
     返回:
         实际加入 PATH 的目录列表（已按优先级排序）。
     """
-    global _path_prepared
+    # 两个模块级变量都要声明：函数后面会给 _FFMPEG_ADDED 赋值，
+    # 不声明的话它会被当成局部变量，第二次调用在早退分支上直接 UnboundLocalError
+    global _path_prepared, _FFMPEG_ADDED
     if _path_prepared:
         return list(_FFMPEG_ADDED)
     _path_prepared = True

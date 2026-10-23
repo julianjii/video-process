@@ -19,6 +19,9 @@ build = ["pyinstaller>=6.0"]
 [project.gui-scripts]
 video-process = "video_process.entry:run"
 
+[project.scripts]
+video-process-cli = "video_process.cli:main"
+
 [tool.setuptools]
 packages = [
     "video_process",

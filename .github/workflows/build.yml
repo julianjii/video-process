@@ -43,15 +43,31 @@ jobs:
       - name: 打包
         run: python build.py --clean
 
-      - name: 冒烟检查
+      - name: 冒烟检查（图形界面 + 命令行）
         shell: bash
-        run: test -f "dist/video-process/视频处理工具集.exe"
+        run: |
+          test -f "dist/video-process/视频处理工具集.exe"
+          test -f "dist/video-process/视频处理工具集-命令行.exe"
+          "dist/video-process/视频处理工具集-命令行.exe" --version
+          "dist/video-process/视频处理工具集-命令行.exe" --help > /dev/null
 
       - name: 压缩
         shell: bash
         run: |
           cd dist
           tar -a -cf "../video-process-${{ steps.ver.outputs.version }}-win64.zip" video-process
+
+      - name: 打包命令行版（单文件，便于单独分发）
+        run: python build.py --onefile --targets cli
+
+      - name: 命令行版冒烟检查与压缩
+        shell: bash
+        run: |
+          cp "dist/视频处理工具集-命令行.exe" dist/video-process-cli.exe
+          dist/video-process-cli.exe --version
+          dist/video-process-cli.exe --help > /dev/null
+          cd dist
+          tar -a -cf "../video-process-cli-${{ steps.ver.outputs.version }}-win64.zip" video-process-cli.exe
 
       - uses: actions/upload-artifact@v4
         with:

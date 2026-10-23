@@ -1,9 +1,10 @@
 # -*- mode: python ; coding: utf-8 -*-
 """PyInstaller 打包配置。
 
-产出单个可执行文件：
+产出可执行文件（按 VP_TARGETS 决定打包哪一个 / 全都打包）：
 
-    视频处理工具集.exe   图形界面版（--windowed，不弹控制台黑窗）
+    视频处理工具集.exe         图形界面版（--windowed，不弹控制台黑窗）
+    视频处理工具集-命令行.exe  命令行版（console，接受参数与管道）
 
 ffmpeg / ffprobe 默认一并打包（能从 PATH 找到的话），
 产物因此可以脱离 Python 与 ffmpeg 环境独立运行，
@@ -13,11 +14,14 @@ ffmpeg / ffprobe 默认一并打包（能从 PATH 找到的话），
 
     pyinstaller bundle/video_process.spec
     VP_BUILD_MODE=onefile pyinstaller bundle/video_process.spec
+    VP_BUILD_MODE=onefile VP_TARGETS=cli pyinstaller bundle/video_process.spec
 
 可用环境变量：
     VP_BUILD_MODE   onedir（默认）| onefile
+    VP_TARGETS      both（默认）| gui | cli —— 打包哪些入口
     VP_UPX          1 启用 UPX 压缩（需本机已装 upx）
-    VP_GUI_NAME     exe 名
+    VP_GUI_NAME     图形界面 exe 名
+    VP_CLI_NAME     命令行 exe 名
     VP_DIST_NAME    dist 下的输出目录名
     VP_WITH_FFMPEG  auto（默认）| 1 | 0 —— 是否附带 ffmpeg
     VP_FFMPEG_DIR   指定 ffmpeg 所在目录（默认从 PATH 查找）
@@ -56,9 +60,20 @@ def _env_flag(name, default=False):
 
 
 GUI_NAME = _env("VP_GUI_NAME", "视频处理工具集")
+CLI_NAME = _env("VP_CLI_NAME", "视频处理工具集-命令行")
 DIST_NAME = _env("VP_DIST_NAME", "video-process")
 ONEFILE = _env("VP_BUILD_MODE", "onedir").strip().lower() == "onefile"
 UPX = _env_flag("VP_UPX", False)
+
+# both：两个入口都打（GUI 依赖是 CLI 的超集，单目录模式共用一份依赖）
+# gui / cli：只打其中一个，省掉另一半的依赖分析与体积
+TARGETS = _env("VP_TARGETS", "both").strip().lower()
+if TARGETS not in ("both", "gui", "cli"):
+    raise SystemExit(
+        f"[spec] 错误: VP_TARGETS 只能是 both / gui / cli，当前为 {TARGETS!r}"
+    )
+WANT_GUI = TARGETS in ("both", "gui")
+WANT_CLI = TARGETS in ("both", "cli")
 
 ICON_PATH = os.path.join(ROOT, "assets", "app.ico")
 HAS_ICON = os.path.isfile(ICON_PATH)
@@ -110,7 +125,8 @@ else:
 
 print(
     f"[spec] 视频处理工具集 v{APP_VERSION} · "
-    f"{'单文件' if ONEFILE else '单目录'}模式"
+    f"{'单文件' if ONEFILE else '单目录'}模式 · "
+    f"打包目标 {TARGETS}"
 )
 if ONEFILE and FFMPEG_BINARIES:
     print(
@@ -123,12 +139,13 @@ if ONEFILE and FFMPEG_BINARIES:
 # ---------------------------------------------------------------------------
 # defs/tools 都是静态 import，PyInstaller 能自动追踪；
 # 这里显式声明的是 Qt 绑定，避免 hook 漏收。
-HIDDEN_IMPORTS = [
+# 命令行版不 import Qt，绝不能把 Qt 的隐藏导入带进去（否则体积白涨几百 MB）。
+HIDDEN_IMPORTS_GUI = [
     "PyQt6.QtCore",
     "PyQt6.QtGui",
     "PyQt6.QtWidgets",
-    "opencc",
 ]
+HIDDEN_IMPORTS_COMMON = ["opencc"]
 
 # 明确用不到的重量级模块。PyInstaller 默认也会排除一部分，这里只是再收紧
 EXCLUDES = [
@@ -169,33 +186,48 @@ def _toc(analysis, name):
 # ---------------------------------------------------------------------------
 # 依赖分析
 # ---------------------------------------------------------------------------
-a = Analysis(
-    [os.path.join(SPECDIR, "entry_gui.py")],
-    **_supported(Analysis, dict(
-        pathex=[ROOT],
-        binaries=FFMPEG_BINARIES,
-        datas=DATAS,
-        hiddenimports=HIDDEN_IMPORTS,
-        hookspath=[],
-        hooksconfig={},
-        runtime_hooks=[],
-        excludes=EXCLUDES,
-        win_no_prefer_redirects=False,
-        win_private_assemblies=False,
-        cipher=None,
-        noarchive=False,
-    )),
+def make_analysis(script, hiddenimports):
+    """按入口脚本做一次依赖分析。"""
+    return Analysis(
+        [os.path.join(SPECDIR, script)],
+        **_supported(Analysis, dict(
+            pathex=[ROOT],
+            binaries=FFMPEG_BINARIES,
+            datas=DATAS,
+            hiddenimports=hiddenimports,
+            hookspath=[],
+            hooksconfig={},
+            runtime_hooks=[],
+            excludes=EXCLUDES,
+            win_no_prefer_redirects=False,
+            win_private_assemblies=False,
+            cipher=None,
+            noarchive=False,
+        )),
+    )
+
+
+def make_pyz(analysis):
+    """PYZ 的签名在 5.x / 6.x 之间变了：
+
+    5.x  PYZ(pure, zipped_data=..., cipher=...)
+    6.x  PYZ(*tocs)  —— 位置参数，zipped_data 与 cipher 都被移除
+    因此这里只能按位置传，并用 hasattr 判断要不要带 zipped_data。
+    """
+    tocs = [analysis.pure]
+    if hasattr(analysis, "zipped_data"):
+        tocs.append(_toc(analysis, "zipped_data"))
+    return PYZ(*tocs)
+
+
+a_gui = (
+    make_analysis("entry_gui.py", HIDDEN_IMPORTS_COMMON + HIDDEN_IMPORTS_GUI)
+    if WANT_GUI else None
 )
-
-# PYZ 的签名在 5.x / 6.x 之间变了：
-#   5.x  PYZ(pure, zipped_data=..., cipher=...)
-#   6.x  PYZ(*tocs)  —— 位置参数，zipped_data 与 cipher 都被移除
-# 因此这里只能按位置传，并用 hasattr 判断要不要带 zipped_data
-_pyz_tocs = [a.pure]
-if hasattr(a, "zipped_data"):
-    _pyz_tocs.append(_toc(a, "zipped_data"))
-
-pyz = PYZ(*_pyz_tocs)
+a_cli = (
+    make_analysis("entry_cli.py", HIDDEN_IMPORTS_COMMON)
+    if WANT_CLI else None
+)
 
 # ---------------------------------------------------------------------------
 # 可执行文件
@@ -217,16 +249,32 @@ EXE_KW = dict(
 )
 
 if ONEFILE:
-    exe = EXE(
-        pyz, a.scripts, a.binaries, a.zipfiles, a.datas, [],
-        name=GUI_NAME, console=False, **EXE_KW,
-    )
+    # 单文件模式各带各的依赖：命令行版不含 Qt，体积明显小于图形界面版
+    if WANT_GUI:
+        exe_gui = EXE(
+            make_pyz(a_gui), a_gui.scripts, a_gui.binaries, a_gui.zipfiles,
+            a_gui.datas, [], name=GUI_NAME, console=False, **EXE_KW,
+        )
+    if WANT_CLI:
+        exe_cli = EXE(
+            make_pyz(a_cli), a_cli.scripts, a_cli.binaries, a_cli.zipfiles,
+            a_cli.datas, [], name=CLI_NAME, console=True, **EXE_KW,
+        )
 else:
-    exe = EXE(
-        pyz, a.scripts, [],
-        name=GUI_NAME, console=False, exclude_binaries=True, **EXE_KW,
-    )
+    exes = []
+    if WANT_GUI:
+        exes.append(EXE(
+            make_pyz(a_gui), a_gui.scripts, [],
+            name=GUI_NAME, console=False, exclude_binaries=True, **EXE_KW,
+        ))
+    if WANT_CLI:
+        exes.append(EXE(
+            make_pyz(a_cli), a_cli.scripts, [],
+            name=CLI_NAME, console=True, exclude_binaries=True, **EXE_KW,
+        ))
+    # 两个 exe 共用一个目录与一份依赖：GUI 的依赖是 CLI 的超集
+    base = a_gui if WANT_GUI else a_cli
     coll = COLLECT(
-        exe, a.binaries, a.zipfiles, a.datas,
+        *exes, base.binaries, base.zipfiles, base.datas,
         strip=False, upx=UPX, upx_exclude=[], name=DIST_NAME,
     )

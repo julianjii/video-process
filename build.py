@@ -2,13 +2,15 @@
 # -*- coding: utf-8 -*-
 """一键打包：生成版本资源，再调用 PyInstaller。
 
-产出 dist/ 下的单个 exe（单文件模式）或 dist/video-process/ 目录（单目录模式）：
+产出 dist/ 下的 exe（单文件模式）或 dist/video-process/ 目录（单目录模式）：
 
-    视频处理工具集.exe   图形界面版，双击即用，无控制台黑窗
+    视频处理工具集.exe          图形界面版，双击即用，无控制台黑窗
+    视频处理工具集-命令行.exe   命令行版，终端里带参数运行
 
 用法:
     python build.py                 # 单目录（推荐：启动快、升级只换改动的库）+ 内置 ffmpeg
     python build.py --onefile       # 单文件（便于分发，但每次启动都要解压）
+    python build.py --targets cli   # 只打命令行版（体积小，适合单独分发）
     python build.py --clean         # 先清掉上次的构建缓存
     python build.py --no-ffmpeg     # 不打包 ffmpeg，运行时依赖系统 PATH
     python build.py --ffmpeg-dir DIR  # 指定 ffmpeg 所在目录（默认从 PATH 查找）
@@ -40,6 +42,17 @@ GEN_DIR = os.path.join(ROOT, "build")
 
 #: 构建产物目录名（与 spec 里的 VP_DIST_NAME 保持一致）
 DIST_NAME = "video-process"
+
+#: 两个入口的 exe 名（与 spec 里的 VP_GUI_NAME / VP_CLI_NAME 保持一致）
+GUI_NAME = "视频处理工具集"
+CLI_NAME = "视频处理工具集-命令行"
+
+#: 构建目标 -> 会产出的 exe 名
+TARGET_EXES = {
+    "both": [GUI_NAME, CLI_NAME],
+    "gui": [GUI_NAME],
+    "cli": [CLI_NAME],
+}
 
 if ROOT not in sys.path:
     sys.path.insert(0, ROOT)
@@ -99,16 +112,16 @@ def ensure_version_file() -> str:
     return path
 
 
-def clean(onefile: bool) -> None:
+def clean(onefile: bool, target: str = "both") -> None:
     """清掉上次构建产物。"""
     step("清理上次构建")
-    targets = [WORK, os.path.join(GEN_DIR, "version_info.txt")]
+    items = [WORK, os.path.join(GEN_DIR, "version_info.txt")]
     if onefile:
-        targets.append(os.path.join(DIST, "视频处理工具集.exe"))
+        items += [os.path.join(DIST, f"{name}.exe") for name in TARGET_EXES[target]]
     else:
-        targets.append(os.path.join(DIST, DIST_NAME))
+        items.append(os.path.join(DIST, DIST_NAME))
 
-    for item in targets:
+    for item in items:
         if os.path.isdir(item):
             shutil.rmtree(item, ignore_errors=True)
             log(f"    已删除目录: {item}")
@@ -155,12 +168,17 @@ def report_ffmpeg(directory: Optional[str], enabled: bool) -> bool:
 
 
 def run_pyinstaller(onefile: bool, upx: bool, with_ffmpeg: bool,
-                    ffmpeg_dir: Optional[str]) -> int:
+                    ffmpeg_dir: Optional[str], target: str = "both") -> int:
     """调用 PyInstaller 执行 spec。"""
-    step(f"开始打包（{'单文件' if onefile else '单目录'}模式，请稍候）")
+    step(
+        f"开始打包（{'单文件' if onefile else '单目录'}模式 · 目标 {target}，请稍候）"
+    )
 
     env = os.environ.copy()
     env["VP_BUILD_MODE"] = "onefile" if onefile else "onedir"
+    env["VP_TARGETS"] = target
+    env["VP_GUI_NAME"] = GUI_NAME
+    env["VP_CLI_NAME"] = CLI_NAME
     env["VP_UPX"] = "1" if upx else "0"
     env["VP_DIST_NAME"] = DIST_NAME
     env["VP_WITH_FFMPEG"] = "1" if with_ffmpeg else "0"
@@ -184,21 +202,25 @@ def run_pyinstaller(onefile: bool, upx: bool, with_ffmpeg: bool,
     return result.returncode
 
 
-def report(onefile: bool, code: int, with_ffmpeg: bool = False) -> None:
+def report(onefile: bool, code: int, with_ffmpeg: bool = False,
+           target: str = "both") -> None:
     """打印构建结果。"""
     log("")
     if code != 0:
         log("打包失败，请检查上面的 PyInstaller 输出")
         return
 
-    if onefile:
-        log("打包完成:")
-        log(f"    {os.path.join(DIST, '视频处理工具集.exe')}")
-    else:
-        out = os.path.join(DIST, DIST_NAME)
-        log("打包完成:")
-        log(f"    {os.path.join(out, '视频处理工具集.exe')}")
+    out = DIST if onefile else os.path.join(DIST, DIST_NAME)
+    log("打包完成:")
+    for name in TARGET_EXES[target]:
+        log(f"    {os.path.join(out, name + '.exe')}")
+    if not onefile:
         log(f"\n分发时把整个 {DIST_NAME}/ 目录一起拷贝即可")
+    if target != "gui":
+        log(
+            "\n命令行版用法: 视频处理工具集-命令行.exe --help"
+            "\n               视频处理工具集-命令行.exe merge <视频文件夹>"
+        )
 
     if with_ffmpeg:
         log(
@@ -221,6 +243,10 @@ def main() -> int:
     )
     parser.add_argument(
         "--onefile", action="store_true", help="打包为单个 exe（默认单目录）"
+    )
+    parser.add_argument(
+        "--targets", choices=["both", "gui", "cli"], default="both",
+        help="打包哪些入口：both=图形界面+命令行（默认），gui=仅图形界面，cli=仅命令行",
     )
     parser.add_argument(
         "--clean", action="store_true", help="构建前清掉上次的产物与缓存"
@@ -246,7 +272,7 @@ def main() -> int:
         return 1
 
     if args.clean:
-        clean(args.onefile)
+        clean(args.onefile, args.targets)
 
     if os.path.isfile(ICON):
         log(f"图标: {ICON}")
@@ -257,9 +283,9 @@ def main() -> int:
     with_ffmpeg = report_ffmpeg(args.ffmpeg_dir, not args.no_ffmpeg)
 
     code = run_pyinstaller(
-        args.onefile, args.upx, not args.no_ffmpeg, args.ffmpeg_dir
+        args.onefile, args.upx, not args.no_ffmpeg, args.ffmpeg_dir, args.targets
     )
-    report(args.onefile, code, with_ffmpeg and code == 0)
+    report(args.onefile, code, with_ffmpeg and code == 0, args.targets)
     return code
 
 
