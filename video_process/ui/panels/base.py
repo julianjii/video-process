@@ -31,7 +31,7 @@ from ...core.paths import validate_path
 from ...param_spec import ParamSpec, ToolDefinition
 from ..dialogs.confirm import ConfirmDialog, build_summary_lines
 from ..host import PanelHost
-from ..widgets import PathInput
+from ..widgets import NumberStepper, PathInput
 
 
 class _ParamRow(QWidget):
@@ -93,6 +93,15 @@ class _ParamRow(QWidget):
                 select_directory=False,
                 file_patterns=spec.file_patterns,
             )
+        if spec.kind == "stepper":
+            return NumberStepper(
+                value=spec.default if spec.default is not None else 0.0,
+                step=spec.step,
+                minimum=spec.minimum,
+                maximum=spec.maximum,
+                decimals=spec.decimals,
+                placeholder=spec.help or spec.label,
+            )
         if spec.kind == "choice":
             combo = QComboBox()
             combo.setSizePolicy(
@@ -132,6 +141,8 @@ class _ParamRow(QWidget):
             return editor.value
         if isinstance(editor, QPlainTextEdit):
             return editor.toPlainText()
+        if isinstance(editor, NumberStepper):
+            return editor.value
         return editor.text()
 
     def set_value(self, value: Any) -> None:
@@ -146,6 +157,8 @@ class _ParamRow(QWidget):
             editor.set_value("" if value is None else str(value))
         elif isinstance(editor, QPlainTextEdit):
             editor.setPlainText("" if value is None else str(value))
+        elif isinstance(editor, NumberStepper):
+            editor.set_value(value)
         else:
             editor.setText("" if value is None else str(value))
 
@@ -153,6 +166,9 @@ class _ParamRow(QWidget):
         path_input = self.path_input()
         if path_input is not None:
             path_input.set_invalid(invalid)
+            return
+        if isinstance(self.editor, NumberStepper):
+            self.editor.set_invalid(invalid)
             return
         if not isinstance(self.editor, (QCheckBox, QComboBox, QPlainTextEdit)):
             self.editor.setProperty("invalid", "true" if invalid else "false")
@@ -240,6 +256,7 @@ class ToolPanel(QWidget):
         scroll.setWidget(content)
         root.addWidget(scroll, 1)
 
+        self.build_footer(root)
         root.addLayout(self._build_actions())
 
     def _build_row(self, spec: ParamSpec) -> _ParamRow:
@@ -258,11 +275,17 @@ class ToolPanel(QWidget):
             editor.noticeRequested.connect(self._on_path_notice)
         elif isinstance(editor, QPlainTextEdit):
             editor.textChanged.connect(self._on_value_changed)
+        elif isinstance(editor, NumberStepper):
+            editor.valueChanged.connect(self._on_value_changed)
         else:
             editor.textChanged.connect(self._on_value_changed)
 
     def build_extra(self, content: QWidget, layout: QVBoxLayout) -> None:
         """子类覆盖：追加自定义控件（如时间线计算器的结果区）。"""
+        return None
+
+    def build_footer(self, layout: QVBoxLayout) -> None:
+        """子类覆盖：在滚动区之外、底部按钮行上方追加常驻控件。"""
         return None
 
     def _build_actions(self) -> QHBoxLayout:

@@ -13,9 +13,11 @@ from ..core.amf import QUALITY_CHOICES, USAGE_CHOICES
 from ..param_spec import (
     ParamSpec,
     ToolDefinition,
+    validate_gain_db,
     validate_segments,
     validate_time_points,
 )
+from ..tools.adjust_volume import adjust_volume
 from ..tools.batch_trim import batch_trim
 from ..tools.compress import QUALITY_CHOICES as COMPRESS_QUALITY_CHOICES
 from ..tools.compress import compress_video
@@ -504,6 +506,72 @@ CONVERT = ToolDefinition(
     runner=convert_to_mp4,
 )
 
+VOLUME = ToolDefinition(
+    id="volume",
+    title="音量调整（视频不重编码）",
+    group=GROUP,
+    description=(
+        "只重编码音频，视频画面原样复制（-c:v copy），不重新渲染，速度快、画质零损失。\n"
+        "  · 增益按分贝填写：+6 约等于音量加倍，-6 约等于减半\n"
+        "  · 多音轨视频对所有音轨统一处理\n"
+        "  · 削顶保护：串接 alimiter 限幅器，增益较大时不爆音\n"
+        "  · 音频重编码为 AAC，码率 128 / 192 / 256 / 320 kbps 可选\n"
+        "处理完成后原地替换原文件；失败或取消时原文件不受影响。"
+    ),
+    specs=[
+        ParamSpec(
+            name="input_path",
+            label="视频文件或文件夹",
+            kind="path",
+            file_patterns=VIDEO_EXTS,
+            help="支持单个视频或整个文件夹批量处理（原地替换，不产生新文件）",
+        ),
+        ParamSpec(
+            name="gain_db",
+            label="音量增益 dB（正数放大 / 负数衰减）",
+            kind="stepper",
+            default=6.0,
+            validator=validate_gain_db,
+            step=1.0,
+            minimum=-60.0,
+            maximum=60.0,
+            decimals=1,
+            help="点「−」「+」每次调整 1 dB，也可直接键入；+6 约等于音量加倍，-6 约等于减半",
+        ),
+        ParamSpec(
+            name="limiter",
+            label="削顶保护（alimiter 限幅器）",
+            kind="bool",
+            default=True,
+            required=False,
+            help="增益较大时限制峰值在 -0.45 dB 附近，避免波形削顶爆音",
+        ),
+        ParamSpec(
+            name="audio_bitrate",
+            label="音频码率（重编码）",
+            kind="choice",
+            default=192,
+            choices=[
+                ("128 kbps", 128),
+                ("192 kbps（默认）", 192),
+                ("256 kbps", 256),
+                ("320 kbps", 320),
+            ],
+            required=False,
+            help="音频会被重编码，码率越高音质越好、体积越大",
+        ),
+        ParamSpec(
+            name="recursive",
+            label="递归子目录",
+            kind="bool",
+            default=True,
+            required=False,
+            setting="recursive_scan",
+        ),
+    ],
+    runner=adjust_volume,
+)
+
 DEFS = [
     MERGE,
     TRIM_EDGES,
@@ -513,6 +581,7 @@ DEFS = [
     SPLIT,
     COMPRESS,
     CONVERT,
+    VOLUME,
 ]
 
 __all__ = ["GROUP", "DEFS", "amd_specs", "VIDEO_EXTS"]

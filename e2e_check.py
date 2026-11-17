@@ -56,6 +56,35 @@ def duration_of(p):
     return d if d else 0.0
 
 
+def stream_hash(path, kind="v"):
+    """取某类流（v/a）的 md5 流哈希，用于验证流确实是被原样复制的。"""
+    proc = subprocess.run(
+        ["ffmpeg", "-v", "error", "-i", path, "-map", f"0:{kind}",
+         "-c", "copy", "-f", "streamhash", "-hash", "md5", "-"],
+        capture_output=True, text=True, encoding="utf-8", errors="replace",
+    )
+    return proc.stdout.strip()
+
+
+def loudness(path):
+    """返回 (mean_volume, max_volume)，单位 dB；解析失败返回 (None, None)。"""
+    proc = subprocess.run(
+        ["ffmpeg", "-hide_banner", "-nostats", "-i", path, "-map", "0:a",
+         "-af", "volumedetect", "-f", "null", "-"],
+        capture_output=True, text=True, encoding="utf-8", errors="replace",
+    )
+    mean = peak = None
+    for line in proc.stderr.splitlines():
+        try:
+            if "mean_volume:" in line:
+                mean = float(line.rsplit("mean_volume:", 1)[1].split("dB")[0])
+            elif "max_volume:" in line:
+                peak = float(line.rsplit("max_volume:", 1)[1].split("dB")[0])
+        except (IndexError, ValueError):
+            continue
+    return mean, peak
+
+
 def main():
     if os.path.exists(WORK):
         shutil.rmtree(WORK, ignore_errors=True)
@@ -321,7 +350,7 @@ def main():
     from video_process.settings_store import load_settings
 
     _parser, cli_tools = cli.build_parser(load_settings())
-    check("cli 生成全部子命令", len(cli_tools) == 16, f"实际 {len(cli_tools)} 个")
+    check("cli 生成全部子命令", len(cli_tools) == 17, f"实际 {len(cli_tools)} 个")
     check("cli 不暴露纯界面面板 settings", "settings" not in cli_tools)
 
     missing = []
@@ -349,6 +378,46 @@ def main():
         except SystemExit as exc:
             code = exc.code
     check("cli 未知子命令返回 2", code == 2, f"code={code}")
+
+    # ---------- 17. adjust_volume ----------
+    print("\n[17] 音量调整（视频不重编码）")
+    from video_process.core.probe import get_audio_streams
+    from video_process.tools.adjust_volume import TMP_MARKER, adjust_volume
+
+    vd = os.path.join(WORK, "volume")
+    os.makedirs(vd)
+    vsrc = make_video(os.path.join(vd, "a.mp4"), 12)
+    hash_before = stream_hash(vsrc, "v")
+    mean_before, _ = loudness(vsrc)
+
+    r = adjust_volume(vsrc, gain_db=-6, limiter=False, ctx=mkctx())
+    check("volume 成功", r.success, r.message)
+    check("volume 原地替换（同名同目录）",
+          len(r.outputs) == 1
+          and os.path.normcase(r.outputs[0]) == os.path.normcase(vsrc),
+          str(r.outputs))
+    check("volume 无临时文件残留",
+          not [n for n in os.listdir(vd) if TMP_MARKER in n],
+          str(os.listdir(vd)))
+    d = duration_of(vsrc)
+    check("volume 时长 ≈ 12s", 11.0 < d < 13.0, f"(实际 {d:.2f}s)")
+    check("volume 视频流未重新编码（流哈希一致）",
+          bool(hash_before) and hash_before == stream_hash(vsrc, "v"),
+          hash_before)
+    check("volume 仍有音轨", bool(get_audio_streams(vsrc)))
+    mean_after, _ = loudness(vsrc)
+    ok_loud = (mean_before is not None and mean_after is not None
+               and -7.5 < mean_after - mean_before < -4.5)
+    check("volume 响度下降约 6dB", ok_loud, f"({mean_before} -> {mean_after})")
+
+    r = adjust_volume(vsrc, gain_db=0, ctx=mkctx())
+    check("volume 拒收 0 dB", not r.success, r.message)
+
+    r = adjust_volume(vsrc, gain_db=30, limiter=True, ctx=mkctx())
+    _, peak = loudness(vsrc)
+    check("volume 削顶保护生效（峰值不超过 0dB）",
+          r.success and peak is not None and peak <= 0.5,
+          f"(峰值 {peak} dB)")
 
     # ---------- 汇总 ----------
     print("\n" + "=" * 60)

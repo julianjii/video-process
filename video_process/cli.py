@@ -102,7 +102,7 @@ def _add_param(parser: argparse.ArgumentParser, spec: ParamSpec,
             kwargs["type"] = int
     elif spec.kind == "int":
         kwargs["type"] = int
-    elif spec.kind == "float":
+    elif spec.kind in ("float", "stepper"):
         kwargs["type"] = float
 
     parser.add_argument(flag, **kwargs)

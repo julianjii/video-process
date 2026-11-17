@@ -48,7 +48,7 @@ run.bat
 ![界面概览](assets/screenshot.jpg)
 
 日志区与参数区的高度比例可用鼠标拖动中间分隔条调节。
-共有 18 个工具，分为 4 个分组：视频处理（8 个）、音视频提取（2 个）、字幕工具（5 个）、工具箱（3 个）。
+共有 19 个工具，分为 4 个分组：视频处理（9 个）、音视频提取（2 个）、字幕工具（5 个）、工具箱（3 个）。
 
 ### 快捷键
 
@@ -76,7 +76,7 @@ run.bat
 
 ## 命令行（CLI）
 
-不启动界面也能跑全部 16 个功能。参数规格与图形界面**共用同一份声明**（`defs/`），
+不启动界面也能跑全部 17 个功能。参数规格与图形界面**共用同一份声明**（`defs/`），
 所以字段名、默认值、取值范围、校验规则完全一致；每个子命令的 `--help` 就是权威说明。
 
 ```powershell
@@ -97,6 +97,7 @@ dist\video-process\视频处理工具集-命令行.exe --help  # 打包后的控
 | `split` | 视频分割 | `--input-file` `--split-points` |
 | `compress` | 视频压缩 | `--input-path` |
 | `convert` | 转换为 MP4 | `--input-path` |
+| `volume` | 音量调整（视频不重编码） | `--input-path` |
 | `audio` | 音轨提取（转 MP3） | `--input-path` |
 | `frame` | 视频截图 | `--input-path` |
 | `srt2ass` | SRT 转 ASS | `--input-path` |
@@ -144,6 +145,9 @@ python -m video_process.cli batch-trim D:\录播 --start-cut 15 --end-cut 1:30
 python -m video_process.cli frame D:\a.mp4 --time-position 1:30
 python -m video_process.cli audio D:\a.mp4 -q
 
+# 音量整体 +6 dB（只重编码音频，视频画面不重新渲染，处理完原地替换原文件）
+python -m video_process.cli volume --input-path D:\a.mp4 --gain-db 6
+
 # 时间线重算：管道进、管道出（结果含广告区间 CSV）
 Get-Content .\timeline.txt | python -m video_process.cli timeline --text - > new.txt
 
@@ -169,6 +173,7 @@ python -m video_process.cli zh-convert --text "软件和鼠标" --conversion s2t
 | 视频分割 | 按多个时间点分割。快速无损 / 精确重编码 / AMD 加速 + 关键帧对齐 |
 | 视频压缩 | AMF 硬件压缩，三档质量预设，递归跳过已压缩文件 |
 | 转换 MP4 | 极速换容器 / CPU 重编码 / AMD 重编码 |
+| 音量调整 | 只重编码音频，视频画面原样复制（不重新渲染）。dB 增益用「−」「+」按钮按 1 dB 步进，可选削顶保护，处理完原地替换原文件 |
 
 ### 音视频提取
 
@@ -225,6 +230,7 @@ python -m video_process.cli zh-convert --text "软件和鼠标" --conversion s2t
 | 视频分割 | `{原名}_1.ext`、`{原名}_2.ext` … |
 | 视频压缩 | `{原名}_compressed{原扩展名}` |
 | 转换 MP4 | `{原名}.mp4`（已存在则 `{原名}_converted.mp4`） |
+| 音量调整 | 原地替换原文件（保持原名、原目录、原格式，不产生新文件） |
 | 音轨提取 | `{原名}.mp3` / `{原名}_track{N}_{语言}.mp3` |
 | 视频截图 | `{原名}_time{NN}s.jpg` |
 | SRT 转 ASS | `{原名}.ass` |
@@ -255,7 +261,7 @@ core/                                      ffmpeg 执行器 / ffprobe 探测 /
 video_process/
 ├── core/        ffmpeg 执行器（流式日志、真实进度、可取消）、ffprobe 探测（带缓存）、
 │                时间解析、路径容错与扫描、AMF 参数构造、数据契约
-├── tools/       19 个业务逻辑模块，全部通过 ToolContext 回调上报日志与进度
+├── tools/       20 个业务逻辑模块，全部通过 ToolContext 回调上报日志与进度
 ├── defs/        工具定义层：每个工具一份「参数规格 + 业务函数」，不依赖任何 UI 框架
 ├── ui/          主窗口、通用表单面板、时间线/设置定制面板、
 │                路径选择控件、日志与进度控件、QSS 主题、后台任务执行器
@@ -283,14 +289,14 @@ video_process/
 ## 校验脚本
 
 ```powershell
-python e2e_check.py   # 15 个工具端到端真实 ffmpeg 调用（自动生成测试素材）
+python e2e_check.py   # 16 个工具端到端真实 ffmpeg 调用（自动生成测试素材）
 ```
 
 脚本会调用真实 ffmpeg/ffprobe 并逐项输出 `PASS`/`FAIL`，最后汇总通过与失败数量。
 无 AMF 编码器的环境会自动跳过 AMD 相关用例。
 剪映/必剪字幕导出不涉及 ffmpeg，未包含在端到端测试中。
 
-最后一组用例检查命令行版：16 个子命令是否齐全、每条参数是否都进了 `--help`、
+最后一组用例检查命令行版：17 个子命令是否齐全、每条参数是否都进了 `--help`、
 `timeline` 的结果是否只写 stdout、未知子命令是否返回退出码 2（不依赖 ffmpeg）。
 
 ---

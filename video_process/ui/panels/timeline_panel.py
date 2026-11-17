@@ -70,16 +70,18 @@ class TimelinePanel(ToolPanel):
         self._csv_label.hide()
         layout.addWidget(self._csv_label)
 
+    def build_footer(self, layout: QVBoxLayout) -> None:
+        """复制 / 回填按钮常驻在滚动区之外，避免结果很长时要滚到底。"""
         row = QHBoxLayout()
         row.setContentsMargins(0, 8, 0, 0)
         row.setSpacing(8)
 
-        copy_button = QPushButton("复制到剪贴板", content)
+        copy_button = QPushButton("复制到剪贴板", self)
         copy_button.setCursor(Qt.CursorShape.PointingHandCursor)
         copy_button.clicked.connect(self._copy_result)
         row.addWidget(copy_button)
 
-        fill_button = QPushButton("填入「片段删除」", content)
+        fill_button = QPushButton("填入「片段删除」", self)
         fill_button.setCursor(Qt.CursorShape.PointingHandCursor)
         fill_button.clicked.connect(self._fill_remove_segments)
         row.addWidget(fill_button)

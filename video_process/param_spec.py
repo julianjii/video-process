@@ -19,8 +19,9 @@ class ParamSpec:
 
     name: str                                  # 参数名（字段名）
     label: str                                 # UI 显示标签
-    # dir|file|path|outdir|text|int|float|choice|bool
-    # outdir = 输出文件夹：可选目录，允许尚不存在（由工具自动创建）
+    # dir|file|path|outdir|text|int|float|stepper|choice|bool
+    # outdir  = 输出文件夹：可选目录，允许尚不存在（由工具自动创建）
+    # stepper = 数值输入 + 减/加按钮，点击一次按 step 调整（命令行按 float 解析）
     kind: str
     default: Any = None
     choices: Optional[List[Tuple[str, Any]]] = None   # (显示文本, 实际值)
@@ -38,6 +39,11 @@ class ParamSpec:
     # 默认值来源：指定 Settings 的同名字段后，界面用该设置值作为本参数默认值。
     # 不指定则沿用 default（Settings 面板本身即如此，它直接读 host.settings）。
     setting: Optional[str] = None
+    # kind="stepper" 专用：步长 / 取值范围 / 小数位数
+    step: float = 1.0
+    minimum: Optional[float] = None
+    maximum: Optional[float] = None
+    decimals: int = 1
 
     # --------------------------------------------------------------
     def should_show(self, values: Dict[str, Any]) -> bool:
@@ -60,7 +66,7 @@ class ParamSpec:
                 return int(str(raw).strip())
             except (TypeError, ValueError):
                 return self.default
-        if self.kind == "float":
+        if self.kind in ("float", "stepper"):
             if raw in (None, ""):
                 return self.default
             try:
@@ -149,4 +155,17 @@ def validate_positive_int(value: Any) -> Optional[str]:
         return "必须是整数"
     if n <= 0:
         return "必须大于 0"
+    return None
+
+
+def validate_gain_db(value: Any) -> Optional[str]:
+    """音量增益（分贝）校验：不允许 0 dB，限制在 -60 ~ +60。"""
+    try:
+        gain = float(value)
+    except (TypeError, ValueError):
+        return "请输入数字，如 6 或 -3.5"
+    if abs(gain) < 1e-6:
+        return "0 dB 不会改变音量"
+    if not -60.0 <= gain <= 60.0:
+        return "建议范围 -60 ~ +60 dB"
     return None

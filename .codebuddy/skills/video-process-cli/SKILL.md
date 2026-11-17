@@ -1,6 +1,6 @@
 ---
 name: video-process-cli
-description: This skill should be used when driving the video-process project (d:/work/python/video-process) from a terminal instead of its PyQt6 GUI — merging, trimming, cutting out ad segments, extracting clips/audio/frames, compressing, converting, and working with SRT/ASS/剪映/必剪 subtitles, timeline recalculation, and 繁简 conversion. Trigger it for requests like "批量合并这些视频", "把这段广告剪掉", "把字幕转成 ASS", "重算时间线", "简体转台湾正体", or any scripted/batch media processing in this repository.
+description: This skill should be used when driving the video-process project (d:/work/python/video-process) from a terminal instead of its PyQt6 GUI — merging, trimming, cutting out ad segments, extracting clips/audio/frames, compressing, converting, adjusting audio volume without re-encoding video, and working with SRT/ASS/剪映/必剪 subtitles, timeline recalculation, and 繁简 conversion. Trigger it for requests like "批量合并这些视频", "把这段广告剪掉", "把字幕转成 ASS", "重算时间线", "简体转台湾正体", "调大/调小音量", or any scripted/batch media processing in this repository.
 ---
 
 # 视频处理工具集 · 命令行版
@@ -31,6 +31,7 @@ dist/video-process/视频处理工具集-命令行.exe ...        # packaged con
 | `split` | Split at time points | `--input-file --split-points` |
 | `compress` | AMF hardware compression | `--input-path` |
 | `convert` | Convert to plain MP4 (fast remux / CPU / AMD) | `--input-path` |
+| `volume` | Adjust audio volume in dB (optional limiter); video/subtitle streams copied, audio only re-encoded, **original file replaced in place** | `--input-path` |
 | `audio` | Extract every audio track as MP3 | `--input-path` |
 | `frame` | Save one frame as JPG | `--input-path` |
 | `srt2ass` | SRT → ASS with Chinese-friendly styling | `--input-path` |
@@ -52,11 +53,14 @@ Common options per subcommand:
 
 Frequently used value options: `--mode` (`merge`/`convert` take `1|2|3`, others take `fast|amd`, `split` also `precise`), `--output-dir`, `--segments`, `--quality`, `--cqp/--qp`, `--export-format srt|txt|both`.
 
+`volume` options: `--gain-db` (float dB, `+6` ≈ double, `-6` ≈ half, `0` rejected, range -60~60), `--limiter`/`--no-limiter` (alimiter clipping guard, on by default), `--audio-bitrate {128,192,256,320}` (default 192).
+
 ## Contract
 
 - Logs, progress and the result summary go to **stderr**; output paths or plain text go to **stdout**, one item per line — redirect or pipe freely.
 - Exit codes: `0` success, `1` execution failure, `2` bad arguments.
 - `Ctrl+C` cancels cleanly (ffmpeg process tree is killed).
+- `volume` writes a sibling temp file then `os.replace`s it over the input: the **only** subcommand that overwrites its source. Video/subtitle streams are copied (no re-render), audio is re-encoded; failure or cancel leaves the original untouched, but on success there is no backup — copy the file first if the original audio must be kept.
 - Defaults come from `~/.video-process/config.json` (shared with the GUI). There is no `settings` subcommand; edit that file or use the GUI to change defaults such as `overwrite`, `amf_quality`, `recursive_scan`.
 - Time format: `90` (seconds), `1:30`, `1:30:45`, `1:30:45.500`, plus the keywords `开头` (0) and `结尾` (end of file). Ranges are `start-end`, multiple ranges comma-separated: `开头-1:00,5:00-结尾`.
 
@@ -77,6 +81,12 @@ python -m video_process.cli batch-trim "D:/录播" --start-cut 15 --end-cut 1:30
 python -m video_process.cli frame "D:/a.mp4" --time-position 1:30
 python -m video_process.cli audio "D:/a.mp4" -q
 
+# Audio only: +6 dB in place, video frames untouched (no re-render)
+python -m video_process.cli volume --input-path "D:/剧集/01.mp4" --gain-db 6
+
+# Batch: attenuate every video in a folder by 3 dB, no limiter
+python -m video_process.cli volume --input-path "D:/录播" --gain-db -3 --no-limiter
+
 # Timeline recalculation through a pipe (result on stdout, ad CSV on stderr)
 cat timeline.txt | python -m video_process.cli timeline --text - > new.txt
 
@@ -89,4 +99,5 @@ python -m video_process.cli zh-convert --text "软件和鼠标" --conversion s2t
 - Adding a GUI tool automatically adds a subcommand: register the `ToolDefinition` in `video_process/defs/` (`video.py`, `media.py`, `subtitle.py`, `misc.py`) with `specs` + `runner`. Do not touch `cli.py` for new tools.
 - `video_process/cli.py` must never import PyQt6 — the packaged console build would drag in Qt.
 - Subcommand names are the tool ids; tool ids with `runner=None` (`settings`) are skipped.
+- `ParamSpec.kind` values: `dir|file|path|outdir|text|int|float|stepper|choice|bool`. `stepper` renders as a ±-button numeric input in the GUI (fields `step`/`minimum`/`maximum`/`decimals`) and is parsed as `float` by the CLI.
 - Packaging: `python build.py` (both entries), `python build.py --onefile --targets cli` (console-only single file), `--clean`, `--no-ffmpeg`, `--ffmpeg-dir DIR`.
