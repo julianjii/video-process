@@ -17,7 +17,7 @@ import os
 from typing import List, Optional
 
 from ..core.amf import build_encode_args, require_amf
-from ..core.ffmpeg import FFmpegRunner, build_progress_args
+from ..core.ffmpeg import FFmpegRunner, build_faststart_args, build_progress_args
 from ..core.models import TaskResult, ToolContext, ToolError
 from ..core.paths import (
     cleanup_dir,
@@ -209,7 +209,7 @@ def _merge_fast_ts(
         ctx.log("正在 remux 为 MP4...")
         result = runner.run(
             ["ffmpeg", "-y", "-i", concat_ts, "-c", "copy",
-             "-bsf:a", "aac_adtstoasc", "-movflags", "+faststart", out],
+             "-bsf:a", "aac_adtstoasc", *build_faststart_args(out), out],
             description="  remux 中...",
             check=False,
         )
@@ -217,7 +217,7 @@ def _merge_fast_ts(
             ctx.warn("  aac_adtstoasc 失败，回退为纯 copy remux...")
             runner.run(
                 ["ffmpeg", "-y", "-i", concat_ts, "-c", "copy",
-                 "-movflags", "+faststart", out],
+                 *build_faststart_args(out), out],
                 description="  回退 remux 中...",
             )
     finally:
@@ -252,7 +252,7 @@ def _merge_convert(
         write_concat_list(converted, list_file)
         runner.run(
             ["ffmpeg", "-y", "-f", "concat", "-safe", "0", "-i", list_file,
-             "-c", "copy", out],
+             "-c", "copy", *build_faststart_args(out), out],
             description="  合并中...",
         )
     finally:
@@ -281,7 +281,7 @@ def _merge_direct_gpu(
         runner.run(
             ["ffmpeg", "-y", "-f", "concat", "-safe", "0", "-i", list_file,
              *enc_args,
-             "-c:a", "aac", "-b:a", "128k", out],
+             "-c:a", "aac", "-b:a", "128k", *build_faststart_args(out), out],
             description="  GPU 合并中...",
         )
     finally:

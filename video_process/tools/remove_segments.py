@@ -27,7 +27,7 @@ import time
 from typing import List, Optional, Tuple
 
 from ..core.amf import build_encode_args, require_amf
-from ..core.ffmpeg import FFmpegRunner
+from ..core.ffmpeg import FFmpegRunner, build_faststart_args
 from ..core.models import TaskResult, ToolContext, ToolError
 from ..core.paths import (
     cleanup_dir,
@@ -242,7 +242,7 @@ def _remove_one(
                      "-ss", str(start), "-t", str(seg_duration),
                      *enc_args, "-c:a", "copy",
                      "-avoid_negative_ts", "make_zero",
-                     "-movflags", "+faststart", output_file],
+                     *build_faststart_args(output_file), output_file],
                     duration=seg_duration,
                     description="  AMD 重编码裁剪中...",
                 )
@@ -267,8 +267,8 @@ def _remove_one(
                 )
                 runner.run(
                     ["ffmpeg", "-y", "-i", temp_ts, "-c", "copy",
-                     "-bsf:a", "aac_adtstoasc", "-movflags", "+faststart",
-                     output_file],
+                     "-bsf:a", "aac_adtstoasc",
+                     *build_faststart_args(output_file), output_file],
                     description="  步骤2/2: remux 为 MP4...",
                 )
             except ToolError as exc:
@@ -329,7 +329,7 @@ def _remove_one(
         runner.run(
             ["ffmpeg", "-y", "-f", "concat", "-safe", "0", "-i", concat_list,
              "-c", "copy", "-bsf:a", "aac_adtstoasc",
-             "-movflags", "+faststart", output_file],
+             *build_faststart_args(output_file), output_file],
             description="  合并中...",
         )
 

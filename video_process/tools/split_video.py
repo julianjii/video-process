@@ -20,7 +20,7 @@ import bisect
 import os
 from typing import List, Optional, Tuple
 
-from ..core.ffmpeg import FFmpegRunner
+from ..core.ffmpeg import FFmpegRunner, build_faststart_args
 from ..core.models import TaskResult, ToolContext, ToolError
 from ..core.paths import (
     cleanup_dir,
@@ -280,7 +280,7 @@ def _split_fast(
             ctx.check_cancel()
             runner.run(
                 ["ffmpeg", "-y", "-i", ts_file, "-c", "copy",
-                 "-movflags", "+faststart", out_files[i]],
+                 *build_faststart_args(out_files[i]), out_files[i]],
                 description=f"  转封装 {i + 1}/{len(segments)} -> "
                             f"{os.path.basename(out_files[i])}",
             )
@@ -307,7 +307,8 @@ def _split_precise(
         runner.run(
             ["ffmpeg", "-y", "-ss", str(start), "-i", input_file,
              "-t", str(seg_duration), *v_args,
-             "-c:a", "copy", "-avoid_negative_ts", "make_zero", out_files[i]],
+             "-c:a", "copy", "-avoid_negative_ts", "make_zero",
+             *build_faststart_args(out_files[i]), out_files[i]],
             duration=seg_duration,
             description=f"  生成第 {i + 1}/{len(segments)} 段 "
                         f"({format_seconds(start)} - {format_seconds(end)})",
@@ -342,7 +343,8 @@ def _split_amd(
             ["ffmpeg", "-y", "-hwaccel", "amf", "-hwaccel_output_format", "d3d11",
              "-i", input_file, "-ss", str(start), "-t", str(seg_duration),
              *enc_args,
-             "-c:a", "copy", "-avoid_negative_ts", "make_zero", out_files[i]],
+             "-c:a", "copy", "-avoid_negative_ts", "make_zero",
+             *build_faststart_args(out_files[i]), out_files[i]],
             duration=seg_duration,
             description=f"  AMD 生成第 {i + 1}/{len(segments)} 段 "
                         f"({format_seconds(start)} - {format_seconds(end)})",

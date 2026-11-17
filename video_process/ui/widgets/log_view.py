@@ -75,15 +75,18 @@ class LogView(QPlainTextEdit):
             return
         batch, self._pending = self._pending, []
 
-        cursor = self.textCursor()
-        cursor.movePosition(QTextCursor.MoveOperation.End)
+        parts: List[str] = []
         for message, level in batch:
             color = _LEVEL_COLOR.get(level, "#E5E7EB")
             mark = _LEVEL_MARK.get(level, "")
-            cursor.insertHtml(
-                f'<span style="color:{color};">'
-                f"{html.escape(mark + message)}</span><br>"
-            )
+            text = html.escape(mark + message).replace("\n", "<br>")
+            parts.append(f'<span style="color:{color};">{text}</span><br>')
+
+        cursor = self.textCursor()
+        cursor.movePosition(QTextCursor.MoveOperation.End)
+        # 整批合成一次 insertHtml：逐行插入会触发 N 次文档重排，
+        # 日志量大时（上千行）足以让主线程长时间无法响应。
+        cursor.insertHtml("".join(parts))
         self.setTextCursor(cursor)
         self._scroll_to_end()
 

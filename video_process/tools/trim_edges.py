@@ -16,7 +16,7 @@ import os
 from typing import List, Optional
 
 from ..core.amf import build_encode_args, require_amf
-from ..core.ffmpeg import FFmpegRunner
+from ..core.ffmpeg import FFmpegRunner, build_faststart_args
 from ..core.models import TaskResult, ToolContext, ToolError
 from ..core.paths import (
     cleanup_dir,
@@ -82,8 +82,8 @@ def _trim_one(
             runner.run(
                 ["ffmpeg", "-y", "-hwaccel", "amf", "-hwaccel_output_format", "d3d11",
                  "-i", input_file, "-ss", str(start), "-t", str(keep_duration),
-                 *enc_args, "-c:a", "copy",
-                 "-avoid_negative_ts", "make_zero", output_file],
+                 *enc_args, "-c:a", "copy", "-avoid_negative_ts", "make_zero",
+                 *build_faststart_args(output_file), output_file],
                 duration=keep_duration,
                 description="  AMD 重编码裁剪中...",
             )
@@ -104,7 +104,8 @@ def _trim_one(
         # 步骤2: 在 TS 上精确裁剪
         runner.run(
             ["ffmpeg", "-y", "-i", temp_ts, "-ss", str(start),
-             "-t", str(keep_duration), "-c", "copy", output_file],
+             "-t", str(keep_duration), "-c", "copy",
+             *build_faststart_args(output_file), output_file],
             description="  步骤2/2: 精确裁剪...",
         )
         return os.path.exists(output_file)

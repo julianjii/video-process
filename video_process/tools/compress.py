@@ -17,7 +17,7 @@ import os
 from typing import List, Optional
 
 from ..core.amf import build_encode_args, require_amf
-from ..core.ffmpeg import FFmpegRunner, build_progress_args
+from ..core.ffmpeg import FFmpegRunner, build_faststart_args, build_progress_args
 from ..core.models import TaskResult, ToolContext, ToolError
 from ..core.paths import (
     ensure_dir,
@@ -85,7 +85,7 @@ def _compress_one(
         "ffmpeg", "-y", "-i", input_file,
         *enc_args,
         "-c:a", "copy",
-        "-movflags", "+faststart",
+        *build_faststart_args(out_file),
     ]
     if duration:
         cmd += build_progress_args()

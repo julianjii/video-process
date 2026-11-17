@@ -15,7 +15,7 @@ import os
 from typing import List, Optional
 
 from ..core.amf import build_encode_args, require_amf
-from ..core.ffmpeg import FFmpegRunner
+from ..core.ffmpeg import FFmpegRunner, build_faststart_args
 from ..core.models import TaskResult, ToolContext, ToolError
 from ..core.paths import ensure_dir, validate_path
 from ..core.probe import get_duration
@@ -72,6 +72,7 @@ def _extract_one(
                 *enc_args,
                 "-c:a", "copy",
                 "-avoid_negative_ts", "make_zero",
+                *build_faststart_args(out_file),
                 out_file,
             ]
         else:
@@ -86,6 +87,7 @@ def _extract_one(
                 "-t", str(seg_duration),
                 "-c", "copy",
                 "-avoid_negative_ts", "make_zero",
+                *build_faststart_args(out_file),
                 out_file,
             ]
 

@@ -16,7 +16,21 @@ QUALITY_MAP = {"balanced": 0, "speed": 1, "quality": 2}
 QUALITY_CHOICES = [("balanced（平衡）", "balanced"), ("speed（速度优先）", "speed"), ("quality（质量优先）", "quality")]
 
 # AMF usage 预设 -> ffmpeg -usage 数值
-USAGE_MAP = {"transcoding": 0, "lowlatency": 1, "ultralowlatency": 2}
+# 顺序取自上游 libavcodec 的 AMF_USAGE 枚举：
+#   0 transcoding / 1 ultralowlatency / 2 lowlatency /
+#   3 webcam / 4 high_quality / 5 lowlatency_high_quality
+# 注意 1、2 与直觉相反：早先这里写成 lowlatency=1、ultralowlatency=2，
+# 结果两档被对调下发（选「低延迟」实际给的是「超低延迟」）。
+USAGE_MAP = {
+    "transcoding": 0,
+    "ultralowlatency": 1,
+    "lowlatency": 2,
+    # 以下三档需要较新的 AMF 运行时（较新驱动），老卡驱动上初始化可能被拒，
+    # 因此不进界面下拉，仅保留程序化调用能力
+    "webcam": 3,
+    "high_quality": 4,
+    "lowlatency_high_quality": 5,
+}
 USAGE_CHOICES = [
     ("transcoding（转码）", "transcoding"),
     ("lowlatency（低延迟）", "lowlatency"),

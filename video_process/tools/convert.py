@@ -15,7 +15,7 @@ import os
 from typing import List, Optional
 
 from ..core.amf import build_encode_args, require_amf
-from ..core.ffmpeg import FFmpegRunner, build_progress_args
+from ..core.ffmpeg import FFmpegRunner, build_faststart_args, build_progress_args
 from ..core.models import TaskResult, ToolContext, ToolError
 from ..core.paths import ensure_dir, human_size, remove_files, scan_videos, validate_path
 from ..core.probe import get_duration
@@ -66,6 +66,7 @@ def _convert_one(
     cmd = ["ffmpeg", "-y", "-i", input_file, *v_args]
     if mode != 1 and duration:
         cmd += build_progress_args()
+    cmd += build_faststart_args(output_file)
     cmd.append(output_file)
 
     ctx.log(f"  模式: {label}")
