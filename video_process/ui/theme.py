@@ -228,6 +228,38 @@ QComboBox QAbstractItemView {{
     outline: none;
 }}
 
+/* ---------- 多文件选择列表 ---------- */
+QListWidget#multi-file-list {{
+    background: {BG_PANEL};
+    color: {TEXT};
+    border: 1px solid {BG_RAISED};
+    border-radius: {RADIUS}px;
+    padding: 4px;
+    outline: none;
+}}
+
+QListWidget#multi-file-list:focus {{
+    border: 1px solid {ACCENT};
+}}
+
+QListWidget#multi-file-list[invalid="true"] {{
+    border: 1px solid {ERR};
+}}
+
+QListWidget#multi-file-list::item {{
+    padding: 4px 6px;
+    border-radius: 3px;
+}}
+
+QListWidget#multi-file-list::item:hover {{
+    background: {BG_RAISED};
+}}
+
+QListWidget#multi-file-list::item:selected {{
+    background: {ACCENT_DARK};
+    color: #FFFFFF;
+}}
+
 QCheckBox {{
     background: transparent;
     color: {TEXT};

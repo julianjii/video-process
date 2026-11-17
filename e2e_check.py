@@ -85,6 +85,246 @@ def loudness(path):
     return mean, peak
 
 
+def check_remote_subtitle():
+    """用本地 mock HTTP 服务覆盖：上传 → 轮询 → 下载 → 覆盖保存。"""
+    print("\n[18] 远程音频转字幕（本地 mock HTTP 服务）")
+    import http.server
+    import json
+    import threading
+
+    from video_process.tools.remote_subtitle import (
+        normalize_base_url,
+        transcribe_audio_batch,
+    )
+
+    rd = os.path.join(WORK, "remote")
+    os.makedirs(rd, exist_ok=True)
+    audio = os.path.join(rd, "测试 音频.mp3")
+    with open(audio, "wb") as fh:
+        fh.write(b"ID3" + b"\x00" * 128)
+
+    srt_text = (
+        "1\n"
+        "00:00:00,320 --> 00:00:03,850\n"
+        "大家好，今天我们来测试一下语音转字幕。\n"
+    )
+    state = {"uploads": 0, "polls": {}, "body": b"", "ctype": ""}
+
+    class Handler(http.server.BaseHTTPRequestHandler):
+        def log_message(self, *_args):  # 静默访问日志
+            pass
+
+        def _json(self, code, payload):
+            body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+            self.send_response(code)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def _base(self):
+            return f"http://127.0.0.1:{self.server.server_address[1]}"
+
+        def do_GET(self):
+            if self.path == "/healthz":
+                self._json(200, {
+                    "status": "ok", "cuda_corrupted": False,
+                    "reason": "", "active_tasks": 0,
+                })
+                return
+            if self.path.endswith("/srt"):
+                body = srt_text.encode("utf-8")
+                self.send_response(200)
+                self.send_header(
+                    "Content-Type", "application/x-subrip; charset=utf-8"
+                )
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+                return
+            if self.path.startswith("/api/subtitles/tasks/"):
+                task_id = self.path.rsplit("/", 1)[-1]
+                count = state["polls"].get(task_id, 0) + 1
+                state["polls"][task_id] = count
+                if count < 2:
+                    self._json(200, {
+                        "task_id": task_id, "status": "processing",
+                        "progress": "⏳ 正在处理分段 1-2 / 2",
+                        "filename": os.path.basename(audio),
+                        "language": "Chinese", "created_at": 0,
+                        "started_at": 0, "finished_at": None,
+                    })
+                else:
+                    self._json(200, {
+                        "task_id": task_id, "status": "succeeded",
+                        "progress": "✅ 字幕生成完成",
+                        "filename": os.path.basename(audio),
+                        "language": "Chinese", "created_at": 0,
+                        "started_at": 0, "finished_at": 1,
+                        "srt_filename": "测试 音频.srt",
+                        "srt_url": (
+                            self._base()
+                            + f"/api/subtitles/tasks/{task_id}/srt"
+                        ),
+                        "duration": 3.85, "segment_count": 1,
+                    })
+                return
+            self.send_error(404)
+
+        def do_POST(self):
+            if self.path != "/api/subtitles/tasks":
+                self.send_error(404)
+                return
+            length = int(self.headers.get("Content-Length", "0") or 0)
+            state["body"] = self.rfile.read(length)
+            state["ctype"] = self.headers.get("Content-Type", "")
+            state["uploads"] += 1
+            task_id = f"mock{state['uploads']}"
+            self._json(202, {
+                "task_id": task_id, "status": "queued",
+                "filename": os.path.basename(audio),
+                "language": "Chinese",
+                "status_path": f"/api/subtitles/tasks/{task_id}",
+                "status_url": (
+                    self._base() + f"/api/subtitles/tasks/{task_id}"
+                ),
+                "created_at": 0,
+            })
+
+    server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    base = f"http://127.0.0.1:{server.server_address[1]}"
+
+    keys = ("NO_PROXY", "no_proxy")
+    saved_env = {key: os.environ.get(key) for key in keys}
+    os.environ["NO_PROXY"] = "127.0.0.1,localhost"
+    os.environ["no_proxy"] = "127.0.0.1,localhost"
+
+    srt_path = os.path.join(rd, "测试 音频.srt")
+    try:
+        check(
+            "remote 地址补全 https",
+            normalize_base_url(" x.gradio.live/ ") == "https://x.gradio.live",
+        )
+
+        result = transcribe_audio_batch(
+            base, [audio], language="Chinese", ctx=mkctx(),
+            poll_interval=0.05,
+        )
+        check("remote 转换成功", result.success, result.message)
+        check("remote 上传一次", state["uploads"] == 1,
+              f"实际 {state['uploads']}")
+        check(
+            "remote 请求为 multipart 且含文件名",
+            "multipart/form-data" in state["ctype"]
+            and b'name="file"' in state["body"]
+            and "测试 音频.mp3".encode("utf-8") in state["body"],
+            state["ctype"],
+        )
+        check(
+            "remote 返回查询地址",
+            len(result.links) == 1
+            and "/api/subtitles/tasks/" in str(result.links[0]),
+            str(result.links),
+        )
+        check("remote 至少轮询两次",
+              state["polls"].get("mock1", 0) >= 2, str(state["polls"]))
+        check("remote SRT 保存到音频同目录",
+              os.path.isfile(srt_path), srt_path)
+
+        content = ""
+        if os.path.isfile(srt_path):
+            with open(srt_path, "r", encoding="utf-8") as fh:
+                content = fh.read()
+        check("remote SRT 内容正确", content == srt_text, content[:40])
+
+        with open(srt_path, "w", encoding="utf-8") as fh:
+            fh.write("旧字幕")
+        again = transcribe_audio_batch(
+            base, [audio], language="Chinese", ctx=mkctx(),
+            poll_interval=0.05,
+        )
+        with open(srt_path, "r", encoding="utf-8") as fh:
+            content = fh.read()
+        check("remote 同名 SRT 直接覆盖",
+              again.success and content == srt_text, again.message)
+
+        # 视频文件：先提取 MP3 保存到视频同目录，再上传 MP3
+        video = make_video(os.path.join(rd, "带音轨.mp4"), 2)
+        video_result = transcribe_audio_batch(
+            base, [video], language="Chinese", ctx=mkctx(),
+            poll_interval=0.05,
+        )
+        video_srt = os.path.join(rd, "带音轨.srt")
+        video_mp3 = os.path.join(rd, "带音轨.mp3")
+        check(
+            "remote 视频自动提取音轨并保存字幕",
+            video_result.success and os.path.isfile(video_srt),
+            video_result.message,
+        )
+        check(
+            "remote 视频 MP3 保存到视频同目录",
+            os.path.isfile(video_mp3) and os.path.getsize(video_mp3) > 0,
+            video_mp3,
+        )
+        check(
+            "remote 视频无 .part.mp3 残留",
+            not os.path.exists(video_mp3 + ".part.mp3"),
+        )
+        check(
+            "remote 上传内容为 MP3",
+            'filename="带音轨.mp3"'.encode("utf-8") in state["body"]
+            and b"audio/mpeg" in state["body"]
+            and b"ftyp" not in state["body"],
+            repr(state["body"][:60]),
+        )
+
+        # 其他服务端读不了的音频：只生成临时 MP3，不落在源文件目录
+        m4a = os.path.join(rd, "临时音频.m4a")
+        subprocess.run(
+            ["ffmpeg", "-y", "-f", "lavfi",
+             "-i", "sine=frequency=440:duration=2",
+             "-c:a", "aac", m4a],
+            capture_output=True,
+        )
+        m4a_result = transcribe_audio_batch(
+            base, [m4a], language="Chinese", ctx=mkctx(),
+            poll_interval=0.05,
+        )
+        check(
+            "remote 不支持格式转临时 MP3（不落地到源目录）",
+            m4a_result.success
+            and os.path.isfile(os.path.join(rd, "临时音频.srt"))
+            and not os.path.exists(os.path.join(rd, "临时音频.mp3"))
+            and b"audio/mpeg" in state["body"],
+            m4a_result.message,
+        )
+
+        empty = os.path.join(rd, "empty.mp3")
+        open(empty, "wb").close()
+        uploads_before = state["uploads"]
+        rejected = transcribe_audio_batch(base, [empty], ctx=mkctx())
+        check(
+            "remote 本地拦截 0 字节文件",
+            not rejected.success and state["uploads"] == uploads_before,
+            rejected.message,
+        )
+
+        missing = transcribe_audio_batch(
+            base, [os.path.join(rd, "不存在.mp3")], ctx=mkctx()
+        )
+        check("remote 拦截不存在的文件", not missing.success, missing.message)
+    finally:
+        server.shutdown()
+        server.server_close()
+        for key, value in saved_env.items():
+            if value is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = value
+
+
 def main():
     if os.path.exists(WORK):
         shutil.rmtree(WORK, ignore_errors=True)
@@ -350,7 +590,7 @@ def main():
     from video_process.settings_store import load_settings
 
     _parser, cli_tools = cli.build_parser(load_settings())
-    check("cli 生成全部子命令", len(cli_tools) == 17, f"实际 {len(cli_tools)} 个")
+    check("cli 生成全部子命令", len(cli_tools) == 18, f"实际 {len(cli_tools)} 个")
     check("cli 不暴露纯界面面板 settings", "settings" not in cli_tools)
 
     missing = []
@@ -418,6 +658,9 @@ def main():
     check("volume 削顶保护生效（峰值不超过 0dB）",
           r.success and peak is not None and peak <= 0.5,
           f"(峰值 {peak} dB)")
+
+    # ---------- 18. 远程字幕（mock） ----------
+    check_remote_subtitle()
 
     # ---------- 汇总 ----------
     print("\n" + "=" * 60)

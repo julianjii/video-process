@@ -19,7 +19,8 @@ class ParamSpec:
 
     name: str                                  # 参数名（字段名）
     label: str                                 # UI 显示标签
-    # dir|file|path|outdir|text|int|float|stepper|choice|bool
+    # dir|file|files|path|outdir|text|int|float|stepper|choice|bool
+    # files   = 多文件选择：值为路径列表，命令行用 --xxx a b c 传入
     # outdir  = 输出文件夹：可选目录，允许尚不存在（由工具自动创建）
     # stepper = 数值输入 + 减/加按钮，点击一次按 step 调整（命令行按 float 解析）
     kind: str
@@ -59,6 +60,8 @@ class ParamSpec:
 
     def coerce(self, raw: Any) -> Any:
         """把控件返回值转换为目标类型。"""
+        if self.kind == "files":
+            return self._coerce_files(raw)
         if self.kind == "int":
             if raw in (None, ""):
                 return self.default
@@ -78,6 +81,26 @@ class ParamSpec:
         if raw is None:
             return self.default
         return raw
+
+    @staticmethod
+    def _coerce_files(raw: Any) -> List[str]:
+        """把多文件参数统一成路径列表（命令行传列表，界面传列表，文本按行拆分）。"""
+        if raw is None:
+            return []
+        if isinstance(raw, (list, tuple, set)):
+            items = [str(item) for item in raw]
+        else:
+            text = str(raw).replace("\r\n", "\n").replace("\r", "\n")
+            items = text.split("\n")
+
+        from .core.paths import clean_path
+
+        paths: List[str] = []
+        for item in items:
+            path = clean_path(item)
+            if path:
+                paths.append(path)
+        return paths
 
 
 @dataclass
@@ -168,4 +191,21 @@ def validate_gain_db(value: Any) -> Optional[str]:
         return "0 dB 不会改变音量"
     if not -60.0 <= gain <= 60.0:
         return "建议范围 -60 ~ +60 dB"
+    return None
+
+
+def validate_http_url(value: Any) -> Optional[str]:
+    """远程服务地址校验：省略协议时按 https 处理，只接受 http/https。"""
+    from urllib.parse import urlparse
+
+    text = str(value or "").strip()
+    if not text:
+        return "服务地址不能为空"
+    if "://" not in text:
+        text = "https://" + text
+    parsed = urlparse(text)
+    if parsed.scheme not in ("http", "https"):
+        return "仅支持 http/https 地址"
+    if not parsed.netloc:
+        return "地址不完整，例如 https://xxxx.gradio.live"
     return None

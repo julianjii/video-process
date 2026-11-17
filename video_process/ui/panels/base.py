@@ -31,7 +31,31 @@ from ...core.paths import validate_path
 from ...param_spec import ParamSpec, ToolDefinition
 from ..dialogs.confirm import ConfirmDialog, build_summary_lines
 from ..host import PanelHost
-from ..widgets import NumberStepper, PathInput
+from ..widgets import MultiPathInput, NumberStepper, PathInput
+
+
+def _file_list_errors(value: Any) -> List[str]:
+    """多文件参数校验：至少一个、逐个存在、非 0 字节。"""
+    if isinstance(value, (list, tuple)):
+        items = [str(item) for item in value if str(item or "").strip()]
+    elif value:
+        items = [str(value)]
+    else:
+        items = []
+
+    if not items:
+        return ["请至少添加一个文件"]
+
+    for item in items:
+        ok, resolved, err = validate_path(item, kind="file")
+        if not ok:
+            return [err]
+        try:
+            if os.path.getsize(resolved) <= 0:
+                return [f"文件为空（0 字节）: {os.path.basename(resolved)}"]
+        except OSError as exc:
+            return [f"无法读取文件: {os.path.basename(resolved)}（{exc}）"]
+    return []
 
 
 class _ParamRow(QWidget):
@@ -72,6 +96,11 @@ class _ParamRow(QWidget):
     # ------------------------------------------------------------------
     @staticmethod
     def _make_editor(spec: ParamSpec) -> QWidget:
+        if spec.kind == "files":
+            return MultiPathInput(
+                placeholder="尚未添加文件：可多选文件、添加文件夹，或直接拖入",
+                file_patterns=spec.file_patterns,
+            )
         if spec.kind == "path":
             return PathInput(
                 placeholder="拖入文件或文件夹，或点击右侧浏览…",
@@ -137,7 +166,7 @@ class _ParamRow(QWidget):
         if isinstance(editor, QComboBox):
             data = editor.currentData()
             return editor.currentText() if data is None else data
-        if isinstance(editor, PathInput):
+        if isinstance(editor, (PathInput, MultiPathInput)):
             return editor.value
         if isinstance(editor, QPlainTextEdit):
             return editor.toPlainText()
@@ -155,6 +184,8 @@ class _ParamRow(QWidget):
                 editor.setCurrentIndex(index)
         elif isinstance(editor, PathInput):
             editor.set_value("" if value is None else str(value))
+        elif isinstance(editor, MultiPathInput):
+            editor.set_value(value or [])
         elif isinstance(editor, QPlainTextEdit):
             editor.setPlainText("" if value is None else str(value))
         elif isinstance(editor, NumberStepper):
@@ -166,6 +197,9 @@ class _ParamRow(QWidget):
         path_input = self.path_input()
         if path_input is not None:
             path_input.set_invalid(invalid)
+            return
+        if isinstance(self.editor, MultiPathInput):
+            self.editor.set_invalid(invalid)
             return
         if isinstance(self.editor, NumberStepper):
             self.editor.set_invalid(invalid)
@@ -273,6 +307,9 @@ class ToolPanel(QWidget):
         elif isinstance(editor, PathInput):
             editor.valueChanged.connect(self._on_value_changed)
             editor.noticeRequested.connect(self._on_path_notice)
+        elif isinstance(editor, MultiPathInput):
+            editor.valueChanged.connect(self._on_value_changed)
+            editor.noticeRequested.connect(self._on_path_notice)
         elif isinstance(editor, QPlainTextEdit):
             editor.textChanged.connect(self._on_value_changed)
         elif isinstance(editor, NumberStepper):
@@ -334,6 +371,12 @@ class ToolPanel(QWidget):
 
             value = values.get(spec.name)
 
+            if spec.kind == "files":
+                if not value and not spec.required:
+                    continue
+                for err in _file_list_errors(value):
+                    errors.append(f"{spec.label}：{err}")
+                continue
             if spec.kind == "dir" and value:
                 ok, _r, err = validate_path(str(value), kind="dir")
                 if not ok:
@@ -372,7 +415,11 @@ class ToolPanel(QWidget):
             if row is None:
                 continue
             value = values.get(spec.name)
-            if spec.kind in ("dir", "file", "path") and value:
+            if spec.kind == "files":
+                row.set_invalid(
+                    bool(_file_list_errors(value)) if value else spec.required
+                )
+            elif spec.kind in ("dir", "file", "path") and value:
                 ok, _r, _err = validate_path(
                     str(value),
                     kind="file" if spec.kind == "file" else (

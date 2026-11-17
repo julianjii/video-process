@@ -69,7 +69,9 @@ def _help_for(spec: ParamSpec, default: Any) -> str:
     if spec.choices:
         options = "，".join(f"{value}={label}" for label, value in spec.choices)
         text += f"（可选: {options}）"
-    if spec.kind == "bool":
+    if spec.kind == "files":
+        text += "（可一次传多个文件路径）"
+    elif spec.kind == "bool":
         text += "（默认开启）" if default else "（默认关闭）"
     elif default not in (None, ""):
         text += f"（默认: {default}）"
@@ -82,6 +84,18 @@ def _add_param(parser: argparse.ArgumentParser, spec: ParamSpec,
     default = _default_for(spec, settings)
     flag = "--" + spec.name.replace("_", "-")
     kwargs: Dict[str, Any] = {"help": _help_for(spec, default), "default": default}
+
+    # 多文件参数：--xxx a.mp3 b.wav（列表由 ParamSpec.coerce 统一清洗）
+    if spec.kind == "files":
+        parser.add_argument(
+            flag,
+            nargs="+",
+            default=list(default or []),
+            required=bool(spec.required),
+            metavar="FILE",
+            help=kwargs["help"],
+        )
+        return
 
     # 多行文本不设必填：省略时可以从标准输入读（见 _collect_values）
     if spec.required and spec.default in (None, "") and not spec.multiline:

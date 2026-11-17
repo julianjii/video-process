@@ -2,8 +2,15 @@
 """可复用的 Qt 控件。"""
 
 from .log_view import LogView
+from .multi_path_input import MultiPathInput
 from .number_stepper import NumberStepper
 from .path_input import PathInput
 from .progress import TaskProgress
 
-__all__ = ["LogView", "NumberStepper", "PathInput", "TaskProgress"]
+__all__ = [
+    "LogView",
+    "MultiPathInput",
+    "NumberStepper",
+    "PathInput",
+    "TaskProgress",
+]

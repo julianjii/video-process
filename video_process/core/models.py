@@ -47,6 +47,8 @@ class TaskResult:
     message: str = ""
     outputs: list = field(default_factory=list)
     warnings: list = field(default_factory=list)
+    #: 可复制的外部链接（如远程任务的查询地址），每项为一行文本
+    links: list = field(default_factory=list)
 
     def __bool__(self) -> bool:
         return self.success

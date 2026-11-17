@@ -20,6 +20,15 @@ VIDEO_EXTENSIONS = (
 # 字幕扩展名（rename_srt_to_txt.bat 支持这四种）
 SUBTITLE_EXTENSIONS = (".srt", ".ass", ".vtt", ".lrc")
 
+# 音频扩展名（远程语音转字幕接口支持 mp3/wav/m4a/flac 等）
+AUDIO_EXTENSIONS = (
+    ".mp3", ".wav", ".m4a", ".flac", ".aac", ".ogg",
+    ".opus", ".wma", ".aiff", ".aif", ".amr", ".mka", ".ape",
+)
+
+# 音频 + 视频：视频文件可先提取音轨再上传
+MEDIA_EXTENSIONS = AUDIO_EXTENSIONS + VIDEO_EXTENSIONS
+
 # Windows 文件名非法字符
 _ILLEGAL_CHARS = re.compile(r'[\\/:*?"<>|]')
 
@@ -82,6 +91,10 @@ def is_video_file(path: str) -> bool:
     return os.path.splitext(path)[1].lower() in VIDEO_EXTENSIONS
 
 
+def is_audio_file(path: str) -> bool:
+    return os.path.splitext(path)[1].lower() in AUDIO_EXTENSIONS
+
+
 def _scan(
     directory: str,
     recursive: bool,
@@ -130,6 +143,30 @@ def scan_subtitles(directory: str, recursive: bool = True) -> List[str]:
         recursive,
         lambda name: os.path.splitext(name)[1].lower() in SUBTITLE_EXTENSIONS,
     )
+
+
+def scan_audio(directory: str, recursive: bool = True) -> List[str]:
+    """扫描目录中的音频文件，按名称排序。"""
+    return _scan(directory, recursive, is_audio_file)
+
+
+def scan_files(
+    directory: str,
+    extensions: Iterable[str],
+    recursive: bool = True,
+) -> List[str]:
+    """按扩展名集合扫描目录，结果按名称排序。"""
+    wanted = {str(ext).lower() for ext in extensions}
+    return _scan(
+        directory,
+        recursive,
+        lambda name: os.path.splitext(name)[1].lower() in wanted,
+    )
+
+
+def scan_media(directory: str, recursive: bool = True) -> List[str]:
+    """扫描目录中的音频与视频文件。"""
+    return scan_files(directory, MEDIA_EXTENSIONS, recursive=recursive)
 
 
 

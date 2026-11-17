@@ -49,6 +49,7 @@ run.bat
 
 日志区与参数区的高度比例可用鼠标拖动中间分隔条调节。
 共有 19 个工具，分为 4 个分组：视频处理（9 个）、音视频提取（2 个）、字幕工具（5 个）、工具箱（3 个）。
+其中「音频批量转字幕（远程 API）」需要网络与外部字幕服务，地址每次手动填写。
 
 ### 快捷键
 
@@ -76,7 +77,7 @@ run.bat
 
 ## 命令行（CLI）
 
-不启动界面也能跑全部 17 个功能。参数规格与图形界面**共用同一份声明**（`defs/`），
+不启动界面也能跑全部 18 个功能。参数规格与图形界面**共用同一份声明**（`defs/`），
 所以字段名、默认值、取值范围、校验规则完全一致；每个子命令的 `--help` 就是权威说明。
 
 ```powershell
@@ -104,6 +105,7 @@ dist\video-process\视频处理工具集-命令行.exe --help  # 打包后的控
 | `srt-remove` | SRT 时间段删除 | `--input-file` `--ranges-spec` |
 | `jianying-subtitle` | 剪映字幕导出 | `--input-path` |
 | `bcut-subtitle` | 必剪字幕导出 | `--input-path` |
+| `remote-subtitle` | 音频批量转字幕（远程 API） | `--base-url` `--files` |
 | `timeline` | 时间线计算器 | `--text`（可省略，从标准输入读） |
 | `zh-convert` | 文本繁简转换 | `--text`（同上） |
 
@@ -190,6 +192,7 @@ python -m video_process.cli zh-convert --text "软件和鼠标" --conversion s2t
 | SRT 时间段删除 | 删除指定时间段并将后续字幕时间整体前移 |
 | 剪映字幕导出 | 解析剪映草稿文件 `draft_info.json`，导出文本轨道为 SRT 或 TXT |
 | 必剪字幕导出 | 解析必剪草稿文件 `*.bjson`，导出字幕轨道为 SRT 或 TXT |
+| 音频批量转字幕（远程 API） | 上传本地音频/视频到 Colab 字幕服务，自动排队、轮询并下载 SRT 到源文件同目录 |
 
 ### 工具箱
 
@@ -237,6 +240,30 @@ python -m video_process.cli zh-convert --text "软件和鼠标" --conversion s2t
 | SRT 删除 | `{原名}_removed.srt` |
 | 剪映字幕导出 | 单轨道 `{草稿名}.srt`，多轨道 `{草稿名}_track{N}.srt` |
 | 必剪字幕导出 | 单轨道 `{草稿名}.srt`，多轨道 `{草稿名}_track{N}.srt` |
+| 音频批量转字幕 | `{音频/视频原名}.srt`（与源文件同目录，同名直接覆盖）；视频另存 `{原名}.mp3` |
+
+### 远程音频转字幕（Colab）
+
+Colab 启动成功后控制台会输出 `https://xxxx.gradio.live`，把它填进面板的「服务地址」即可。
+该地址**不会保存**，每次执行都需要重新填写（Colab 重启后地址会变）。
+
+- 音频/视频可多选文件、添加文件夹（递归扫描）或直接拖入。
+- wav/flac/mp3/ogg 等直接上传。
+- 视频文件会先按「音轨提取（转 MP3）」的方式提取第一条音轨，
+  MP3 保存到视频同目录后再上传；m4a/wma 等其他服务端无法直接解析的格式
+  会转成临时 MP3 再上传。
+- 服务端同时最多 5 个排队/处理中任务，程序会自动排队；任务结果保留 1 小时。
+- 转换成功后自动下载 SRT，保存为音频同目录的 `{原名}.srt`，同名直接覆盖。
+- 面板底部汇总每个文件的查询地址，可一键复制，便于事后核对或手动重查。
+- 服务端健康检查发现 CUDA 上下文损坏时会直接中止，并提示重启 Colab runtime。
+
+命令行用法：
+
+```powershell
+python -m video_process.cli remote-subtitle `
+    --base-url https://xxxx.gradio.live `
+    --files "D:\音频\a.mp3" "D:\音频\b.wav" --language Chinese
+```
 
 ---
 
@@ -261,7 +288,7 @@ core/                                      ffmpeg 执行器 / ffprobe 探测 /
 video_process/
 ├── core/        ffmpeg 执行器（流式日志、真实进度、可取消）、ffprobe 探测（带缓存）、
 │                时间解析、路径容错与扫描、AMF 参数构造、数据契约
-├── tools/       20 个业务逻辑模块，全部通过 ToolContext 回调上报日志与进度
+├── tools/       21 个业务逻辑模块，全部通过 ToolContext 回调上报日志与进度
 ├── defs/        工具定义层：每个工具一份「参数规格 + 业务函数」，不依赖任何 UI 框架
 ├── ui/          主窗口、通用表单面板、时间线/设置定制面板、
 │                路径选择控件、日志与进度控件、QSS 主题、后台任务执行器
@@ -289,15 +316,16 @@ video_process/
 ## 校验脚本
 
 ```powershell
-python e2e_check.py   # 16 个工具端到端真实 ffmpeg 调用（自动生成测试素材）
+python e2e_check.py   # 真实 ffmpeg 用例 + 远程字幕 mock 用例（自动生成测试素材）
 ```
 
 脚本会调用真实 ffmpeg/ffprobe 并逐项输出 `PASS`/`FAIL`，最后汇总通过与失败数量。
 无 AMF 编码器的环境会自动跳过 AMD 相关用例。
 剪映/必剪字幕导出不涉及 ffmpeg，未包含在端到端测试中。
 
-最后一组用例检查命令行版：17 个子命令是否齐全、每条参数是否都进了 `--help`、
-`timeline` 的结果是否只写 stdout、未知子命令是否返回退出码 2（不依赖 ffmpeg）。
+命令行用例检查：18 个子命令是否齐全、每条参数是否都进了 `--help`、
+`timeline` 的结果是否只写 stdout、未知子命令是否返回退出码 2（不依赖 ffmpeg）；
+远程字幕用本地 mock HTTP 服务覆盖上传、轮询、下载与同名覆盖。
 
 ---
 

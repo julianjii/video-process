@@ -10,6 +10,7 @@ from PyQt6.QtWidgets import QWidget
 from ...param_spec import ToolDefinition
 from ..host import PanelHost
 from .base import ToolPanel
+from .remote_subtitle_panel import RemoteSubtitlePanel
 from .settings_panel import SettingsPanel
 from .timeline_panel import TimelinePanel
 from .zh_convert_panel import ZhConvertPanel
@@ -19,6 +20,7 @@ _CUSTOM_PANELS = {
     "timeline": TimelinePanel,
     "settings": SettingsPanel,
     "zh-convert": ZhConvertPanel,
+    "remote-subtitle": RemoteSubtitlePanel,
 }
 
 __all__ = [
@@ -26,6 +28,7 @@ __all__ = [
     "TimelinePanel",
     "SettingsPanel",
     "ZhConvertPanel",
+    "RemoteSubtitlePanel",
     "create_panel",
 ]
 
