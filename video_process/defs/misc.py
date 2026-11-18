@@ -25,7 +25,9 @@ TIMELINE = ToolDefinition(
     group=GROUP,
     description=(
         "粘贴视频时间线，自动识别 [广告] 段落并重算后续所有时间点。\n"
-        "每行格式: 时间 标题      例如: 01:33:00 [广告] 广告内容"
+        "每行格式: 时间 标题      例如: 01:33:00 [广告] 广告内容\n"
+        "也可把「某集.总结.txt」拖进输入框：读入内容，自动填入同目录同名视频，"
+        "广告区间写入「片段删除」，并把修订结果另存为「某集.总结.修订.txt」。"
     ),
     specs=[
         ParamSpec(
@@ -33,7 +35,7 @@ TIMELINE = ToolDefinition(
             label="时间线内容",
             kind="text",
             default="",
-            help="每行一条，格式如 00:00 开场介绍",
+            help="每行一条，格式如 00:00 开场介绍；支持直接拖入 .txt 文件",
             multiline=True,
         ),
     ],

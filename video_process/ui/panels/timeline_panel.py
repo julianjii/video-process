@@ -5,10 +5,15 @@
     1. 重算后的时间线
     2. 计算方法说明
     3. 广告区间 CSV（可一键填入「片段删除」）
+
+输入区支持把 ``<文件名>.总结.txt`` 直接拖进来：读取内容后按同目录同名
+视频自动计算，广告区间与视频一并填入「片段删除」，修订结果另存为
+``<文件名>.总结.修订.txt``。
 """
 
 from __future__ import annotations
 
+import os
 from typing import Any, Dict, List
 
 from PyQt6.QtCore import Qt
@@ -23,7 +28,12 @@ from PyQt6.QtWidgets import (
 )
 
 from ...core.models import LogLevel, TaskResult, ToolContext
-from ...tools.timeline import calculate_timeline
+from ...core.textio import read_text
+from ...tools.timeline import (
+    calculate_timeline,
+    find_same_name_video,
+    save_revision,
+)
 from ..host import PanelHost
 from ...param_spec import ToolDefinition
 from .base import ToolPanel
@@ -39,12 +49,25 @@ class TimelinePanel(ToolPanel):
         parent: QWidget | None = None,
     ) -> None:
         self._last_csv = ""
+        #: 拖入的时间线文件；非空时每次计算都会另存修订版
+        self._source_file = ""
+        #: 与时间线文件同目录的同名视频（可能为空）
+        self._source_video = ""
         super().__init__(definition, host, parent)
 
     # ==================================================================
     # 结果区
     # ==================================================================
     def build_extra(self, content: QWidget, layout: QVBoxLayout) -> None:
+        self._source_label = QLabel("", content)
+        self._source_label.setProperty("role", "param-help")
+        self._source_label.setWordWrap(True)
+        self._source_label.setTextInteractionFlags(
+            Qt.TextInteractionFlag.TextSelectableByMouse
+        )
+        self._source_label.hide()
+        layout.addWidget(self._source_label)
+
         section = QLabel("计算结果", content)
         section.setProperty("role", "section")
         layout.addWidget(section)
@@ -147,6 +170,11 @@ class TimelinePanel(ToolPanel):
         self._csv_label.setVisible(bool(ad_csv))
         self._last_csv = ad_csv
 
+        if self._source_file:
+            self._apply_source_revision(
+                result.outputs[0] if result.outputs else "", ad_csv
+            )
+
         for line in warnings:
             self.host.log_message(line, LogLevel.INFO)
         if ad_csv:
@@ -164,6 +192,111 @@ class TimelinePanel(ToolPanel):
     def reset_params(self) -> None:
         super().reset_params()
         self._clear_result()
+        self._source_file = ""
+        self._source_video = ""
+        self._source_label.setText("")
+        self._source_label.hide()
+
+    # ==================================================================
+    # 拖入时间线 txt：读内容 → 找同名视频 → 自动计算 → 另存修订版
+    # ==================================================================
+    _TEXT_SUFFIXES = (".txt",)
+
+    def _on_value_changed(self, *_args) -> None:
+        """手动改动文本即与原文件脱钩，避免把别的内容写进旧修订版。"""
+        self._source_file = ""
+        self._source_video = ""
+        label = getattr(self, "_source_label", None)
+        if label is not None:
+            label.hide()
+        super()._on_value_changed(*_args)
+
+    def on_text_file_dropped(self, name: str, path: str) -> None:
+        if name != "text":
+            super().on_text_file_dropped(name, path)
+            return
+
+        if os.path.splitext(path)[1].lower() not in self._TEXT_SUFFIXES:
+            self.host.notify(
+                f"只能拖入 txt 文本：{os.path.basename(path)}",
+                "warning",
+                timeout=5,
+            )
+            return
+
+        try:
+            content = read_text(path)
+        except (OSError, UnicodeDecodeError) as exc:
+            self.host.notify(
+                f"读取失败：{os.path.basename(path)}（{exc}）",
+                "error",
+                timeout=5,
+            )
+            return
+
+        if not content.strip():
+            self.host.notify(
+                f"文件为空：{os.path.basename(path)}", "warning", timeout=4
+            )
+            return
+
+        # 先写文本（会触发 _on_value_changed 清空来源），再记录来源
+        self.fill_value("text", content)
+        self._source_file = os.path.abspath(path)
+        self._source_video = find_same_name_video(self._source_file)
+
+        video_name = (
+            os.path.basename(self._source_video)
+            if self._source_video else "未找到同名视频"
+        )
+        self._source_label.setText(
+            f"来源：{os.path.basename(self._source_file)}　·　"
+            f"同名视频：{video_name}"
+        )
+        self._source_label.show()
+
+        self.host.log_message(f"已载入时间线：{self._source_file}", LogLevel.INFO)
+        if self._source_video:
+            self.host.log_message(
+                f"同目录同名视频：{self._source_video}", LogLevel.INFO
+            )
+        else:
+            self.host.log_message("同目录下未找到同名视频", LogLevel.WARNING)
+            self.host.notify(
+                "同目录下未找到同名视频，请稍后在「片段删除」中手动选择",
+                "warning",
+                timeout=6,
+            )
+
+        # 拖进来即算：广告区间与修订版都依赖这次计算结果
+        self.request_run()
+
+    def _apply_source_revision(self, text: str, csv: str) -> None:
+        """计算结果回写：另存修订版，并把广告区间 / 视频填入「片段删除」。"""
+        if text:
+            try:
+                target = save_revision(self._source_file, text)
+            except OSError as exc:
+                self.host.log_message(
+                    f"修订版保存失败：{exc}", LogLevel.ERROR
+                )
+                self.host.notify(
+                    f"修订版保存失败：{exc}", "error", timeout=6
+                )
+            else:
+                self.host.log_message(
+                    f"已保存修订版：{target}", LogLevel.SUCCESS
+                )
+                self.host.notify(
+                    f"已保存 {os.path.basename(target)}",
+                    "information",
+                    timeout=4,
+                )
+
+        if csv:
+            self.host.fill_remove_segments(
+                csv, input_path=self._source_video, navigate=False
+            )
 
     # ==================================================================
     # 复制 / 回填

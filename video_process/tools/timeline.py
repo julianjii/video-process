@@ -18,11 +18,13 @@
 
 from __future__ import annotations
 
+import os
 import re
 from dataclasses import dataclass
 from typing import List, Optional
 
 from ..core.models import TaskResult, ToolContext
+from ..core.paths import VIDEO_EXTENSIONS
 from ..core.timeparse import format_mmss, parse_time
 
 # 时间线行: "00:00 标题" / "01:33:00 [广告] 广告内容"
@@ -30,6 +32,12 @@ LINE_RE = re.compile(r"^\s*(\d{1,2}:\d{2}(?::\d{2})?)\s+(.+?)\s*$")
 
 AD_MARKER = "[广告]"
 AD_KEYWORD = "广告"
+
+#: 时间线文本常见的文件名后缀，剥离后得到「文件名」主干
+_KNOWN_SUFFIXES = (".总结", ".修订", ".字幕", ".时间线")
+
+#: 修订版文件名后缀：<文件名>.总结.修订.txt
+REVISION_SUFFIX = ".总结.修订"
 
 
 @dataclass
@@ -110,6 +118,70 @@ def detect_ad_segments(entries: List[TimelineEntry]) -> List[AdSegment]:
 
     segments.sort(key=lambda s: s.start)
     return segments
+
+
+def timeline_stem(path: str) -> str:
+    """取时间线文件的「文件名」主干。
+
+    ``X.总结.txt`` / ``X.总结.修订.txt`` / ``X.srt`` 都返回 ``X``，
+    便于据此定位同目录下的同名视频、生成修订版文件名。
+    """
+    name = os.path.splitext(os.path.basename(str(path or "")))[0]
+    stripped = True
+    while stripped:
+        stripped = False
+        for suffix in _KNOWN_SUFFIXES:
+            if name.lower().endswith(suffix) and len(name) > len(suffix):
+                name = name[: -len(suffix)]
+                stripped = True
+    return name
+
+
+def find_same_name_video(path: str) -> str:
+    """在同目录下找与时间线文件同名的视频，找不到返回空串。
+
+    先按主干（去掉 .总结 / .修订）匹配，再退回完整文件名匹配，
+    扩展名与大小写都不敏感。
+    """
+    source = os.path.abspath(str(path or ""))
+    folder = os.path.dirname(source)
+    if not folder or not os.path.isdir(folder):
+        return ""
+
+    try:
+        listing = os.listdir(folder)
+    except OSError:
+        return ""
+    lookup = {name.lower(): name for name in listing}
+
+    candidates = [timeline_stem(source),
+                  os.path.splitext(os.path.basename(source))[0]]
+    for base in candidates:
+        if not base:
+            continue
+        for ext in VIDEO_EXTENSIONS:
+            hit = lookup.get((base + ext).lower())
+            if hit:
+                return os.path.join(folder, hit)
+    return ""
+
+
+def revision_path_for(path: str) -> str:
+    """``<文件名>.总结.修订.txt``，与时间线文件同目录。"""
+    folder = os.path.dirname(os.path.abspath(str(path or "")))
+    return os.path.join(folder, timeline_stem(path) + REVISION_SUFFIX + ".txt")
+
+
+def save_revision(path: str, text: str) -> str:
+    """把去掉广告后的时间线另存为修订版，返回保存路径。"""
+    target = revision_path_for(path)
+    folder = os.path.dirname(target)
+    if folder:
+        os.makedirs(folder, exist_ok=True)
+    body = text if text.endswith("\n") else text + "\n"
+    with open(target, "w", encoding="utf-8", newline="\n") as fh:
+        fh.write(body)
+    return target
 
 
 def calculate_timeline(

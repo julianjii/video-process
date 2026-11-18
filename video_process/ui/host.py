@@ -47,7 +47,17 @@ class PanelHost(Protocol):
 
     def cancel_task(self) -> None: ...
 
-    def fill_remove_segments(self, csv: str) -> None: ...
+    def fill_remove_segments(
+        self,
+        csv: str = "",
+        input_path: str = "",
+        navigate: bool = True,
+    ) -> None:
+        """把广告区间与同名视频填入「片段删除」面板。
+
+        navigate=False 时不切换导航（拖入文件后仍停在当前面板看结果）。
+        """
+        ...
 
     def reload_panels(self, keep: object = None) -> None:
         """全局设置变更后重建面板（参数默认值在面板创建时快照）。

@@ -270,7 +270,7 @@ class VideoProcessWindow(QMainWindow):
     def _build_log_pane(self) -> QWidget:
         pane = QFrame(self)
         pane.setObjectName("log-pane")
-        pane.setMinimumHeight(150)
+        pane.setMinimumHeight(230)
 
         layout = QVBoxLayout(pane)
         layout.setContentsMargins(12, 8, 12, 10)
@@ -356,15 +356,9 @@ class VideoProcessWindow(QMainWindow):
 
     def switch_to(self, tool_id: str) -> None:
         """切换到指定工具面板（面板按需创建并缓存）。"""
-        definition = TOOL_DEFS.get(tool_id)
-        if definition is None:
-            return
-
-        panel = self._panels.get(tool_id)
+        panel = self._ensure_panel(tool_id)
         if panel is None:
-            panel = create_panel(definition, self, self._stack)
-            self._panels[tool_id] = panel
-            self._stack.addWidget(panel)
+            return
 
         self._stack.setCurrentWidget(panel)
 
@@ -552,21 +546,57 @@ class VideoProcessWindow(QMainWindow):
     # ==================================================================
     # 供面板调用的跨面板能力
     # ==================================================================
-    def fill_remove_segments(self, csv: str) -> None:
-        """把广告区间 CSV 填入「片段删除」面板。"""
-        for index, tool_id in enumerate(self._nav_items):
-            if tool_id == "remove-segments":
-                self._nav_list.setCurrentRow(index)
-                break
+    def _ensure_panel(self, tool_id: str) -> Optional[QWidget]:
+        """按需创建并缓存面板（不切换导航）。"""
+        definition = TOOL_DEFS.get(tool_id)
+        if definition is None:
+            return None
+        panel = self._panels.get(tool_id)
+        if panel is None:
+            panel = create_panel(definition, self, self._stack)
+            self._panels[tool_id] = panel
+            self._stack.addWidget(panel)
+        return panel
 
-        panel = self._panels.get("remove-segments")
+    def fill_remove_segments(
+        self,
+        csv: str = "",
+        input_path: str = "",
+        navigate: bool = True,
+    ) -> None:
+        """把广告区间 / 同名视频填入「片段删除」面板。
+
+        navigate=False 时不切走导航：时间线计算器拖入文件后
+        仍停在原面板展示结果，用户切过去即可看到已填好的参数。
+        """
+        panel = self._ensure_panel("remove-segments")
         if panel is None:
             return
+
+        if navigate:
+            for index, tool_id in enumerate(self._nav_items):
+                if tool_id == "remove-segments":
+                    self._nav_list.setCurrentRow(index)
+                    break
+
         try:
-            if hasattr(panel, "fill_value") and panel.fill_value("segments", csv):
-                self.notify(f"已填入删除时间段: {csv}", "information", timeout=5)
-            else:
-                self.notify("填入失败：未找到时间段字段", "error", timeout=5)
+            parts: List[str] = []
+            if csv and hasattr(panel, "fill_value") and panel.fill_value(
+                "segments", csv
+            ):
+                parts.append(f"时间段 {csv}")
+            if input_path and hasattr(panel, "fill_value") and panel.fill_value(
+                "input_path", input_path
+            ):
+                parts.append(f"视频 {input_path}")
+            if parts:
+                self.notify(
+                    "已填入「片段删除」：" + "；".join(parts),
+                    "information",
+                    timeout=5,
+                )
+            elif csv or input_path:
+                self.notify("填入失败：未找到对应字段", "error", timeout=5)
         except Exception as exc:
             self.notify(f"填入失败: {exc}", "error", timeout=5)
 

@@ -28,10 +28,11 @@ from dataclasses import replace
 
 from ...core.models import LogLevel, TaskResult
 from ...core.paths import validate_path
+from ...core.textio import read_text
 from ...param_spec import ParamSpec, ToolDefinition
 from ..dialogs.confirm import ConfirmDialog, build_summary_lines
 from ..host import PanelHost
-from ..widgets import MultiPathInput, NumberStepper, PathInput
+from ..widgets import MultiPathInput, NumberStepper, PathInput, TextDropEdit
 
 
 def _file_list_errors(value: Any) -> List[str]:
@@ -143,7 +144,7 @@ class _ParamRow(QWidget):
                 combo.setCurrentIndex(index)
             return combo
         if spec.multiline:
-            area = QPlainTextEdit()
+            area = TextDropEdit()
             area.setPlainText("" if spec.default is None else str(spec.default))
             area.setFixedHeight(140)
             return area
@@ -295,6 +296,12 @@ class ToolPanel(QWidget):
 
     def _build_row(self, spec: ParamSpec) -> _ParamRow:
         row = _ParamRow(spec, self)
+        if isinstance(row.editor, TextDropEdit):
+            row.editor.fileDropped.connect(
+                lambda path, name=spec.name: self.on_text_file_dropped(
+                    name, path
+                )
+            )
         self._connect_row(row, spec)
         return row
 
@@ -441,6 +448,22 @@ class ToolPanel(QWidget):
 
     def _on_path_notice(self, message: str, severity: str) -> None:
         self.host.notify(message, severity, timeout=4)
+
+    def on_text_file_dropped(self, name: str, path: str) -> None:
+        """多行文本框拖入文件：默认把文件内容读入该字段，子类可覆盖。"""
+        row = self._rows.get(name)
+        if row is None:
+            return
+        try:
+            row.set_value(read_text(path))
+        except (OSError, UnicodeDecodeError) as exc:
+            self.host.notify(
+                f"读取失败：{os.path.basename(path)}（{exc}）",
+                "error",
+                timeout=5,
+            )
+            return
+        self.host.log_message(f"已从文件载入文本：{path}", LogLevel.INFO)
 
     def refresh_visibility(self) -> None:
         """根据当前值切换条件字段的显隐。"""

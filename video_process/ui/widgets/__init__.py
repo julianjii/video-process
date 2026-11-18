@@ -6,6 +6,7 @@ from .multi_path_input import MultiPathInput
 from .number_stepper import NumberStepper
 from .path_input import PathInput
 from .progress import TaskProgress
+from .text_drop_edit import TextDropEdit
 
 __all__ = [
     "LogView",
@@ -13,4 +14,5 @@ __all__ = [
     "NumberStepper",
     "PathInput",
     "TaskProgress",
+    "TextDropEdit",
 ]
