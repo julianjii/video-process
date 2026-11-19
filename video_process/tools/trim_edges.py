@@ -123,7 +123,7 @@ def _trim_one(
 
 def trim_edges(
     input_path: str,
-    start: str = "0",
+    start: str = "",
     end: str = "",
     output: str = "",
     mode: str = "fast",

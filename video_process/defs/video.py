@@ -128,7 +128,7 @@ TRIM_EDGES = ToolDefinition(
     group=GROUP,
     description=(
         "按绝对时间点裁剪：保留 [开头时间, 结尾时间) 之间的内容。\n"
-        "  · 开头时间：该时间点之前的内容被删除\n"
+        "  · 开头时间：该时间点之前的内容被删除（留空或填 0 =不裁剪开头）\n"
         "  · 结尾时间：该时间点之后的内容被删除（留空或填 结尾 =到视频结尾）\n"
         "  · 快速无损：TS 中间流流复制，秒级完成，切点对齐关键帧\n"
         "  · AMD 硬件加速：AMF 重编码，帧级精确\n"
@@ -146,9 +146,9 @@ TRIM_EDGES = ToolDefinition(
             name="start",
             label="开头裁剪时间点",
             kind="text",
-            default="0",
+            default="",
             required=False,
-            help="支持 90 / 1:30 / 1:30:45，填 0 或留空表示不裁剪开头",
+            help="支持 90 / 1:30 / 1:30:45，留空或填 0 表示不裁剪开头",
         ),
         ParamSpec(
             name="end",
