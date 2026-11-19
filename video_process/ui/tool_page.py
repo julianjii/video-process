@@ -39,6 +39,7 @@ class ToolPage(QWidget):
         self.definition = definition
         self.window = window
 
+        # 日志默认折叠成标题栏，任务开始时由 LogPane.begin() 自动展开
         self._log = LogPane(title=f"{definition.title} · 日志", parent=self)
         self._splitter = QSplitter(Qt.Orientation.Vertical, self)
         self._splitter.setHandleWidth(1)
@@ -49,7 +50,8 @@ class ToolPage(QWidget):
         self._splitter.addWidget(self._log)
         self._splitter.setStretchFactor(0, 3)
         self._splitter.setStretchFactor(1, 2)
-        self._splitter.setSizes([460, 220])
+        self._splitter.setSizes([640, 40])
+        self._log.collapsedChanged.connect(self._on_log_collapsed)
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -57,8 +59,17 @@ class ToolPage(QWidget):
         layout.addWidget(self._splitter, 1)
 
     # ==================================================================
-    # 面板
+    # 面板 / 日志高度分配
     # ==================================================================
+    def _on_log_collapsed(self, collapsed: bool) -> None:
+        """日志展开时给它一个合理高度，折叠时把高度还给参数区。"""
+        total = max(self._splitter.height(), 480)
+        if collapsed:
+            log_height = self._log.collapsed_height()
+        else:
+            log_height = min(240, max(160, int(total * 0.35)))
+        self._splitter.setSizes([total - log_height, log_height])
+
     def _create_panel(self) -> ToolPanel:
         return create_panel(self.definition, self, None)
 
@@ -196,16 +207,16 @@ class SystemLogPage(QWidget):
         layout.addWidget(title)
 
         desc = QLabel(
-            "ffmpeg / AMF 环境检测、全局设置保存与任务调度信息。\n"
-            "各功能的执行日志在对应功能页下方的日志区查看。",
+            "ffmpeg / AMF 检测、设置保存与任务调度；各功能执行日志见功能页底部",
             self,
         )
         desc.setProperty("role", "panel-desc")
         desc.setWordWrap(True)
         layout.addWidget(desc)
-        layout.addSpacing(8)
+        layout.addSpacing(4)
 
-        self._log = LogPane(title="系统消息", parent=self)
+        # 本页就是日志页，默认展开
+        self._log = LogPane(title="系统消息", parent=self, collapsed=False)
         layout.addWidget(self._log, 1)
 
     # ------------------------------------------------------------------

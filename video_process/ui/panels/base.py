@@ -214,6 +214,9 @@ class _ParamRow(QWidget):
 class ToolPanel(QWidget):
     """参数面板基类。"""
 
+    #: 功能说明默认收起；用户展开后新建的面板沿用该选择
+    DESCRIPTION_EXPANDED = False
+
     def __init__(
         self,
         definition: ToolDefinition,
@@ -259,16 +262,44 @@ class ToolPanel(QWidget):
         root.setContentsMargins(18, 14, 18, 14)
         root.setSpacing(0)
 
+        header = QHBoxLayout()
+        header.setContentsMargins(0, 0, 0, 0)
+        header.setSpacing(8)
+
         title = QLabel(self.definition.title, self)
         title.setProperty("role", "panel-title")
-        root.addWidget(title)
+        header.addWidget(title)
+
+        #: 「说明」开关；说明文字较长，默认收起，按需展开
+        self.desc_button: Optional[QPushButton] = None
+        self.desc_box: Optional[QWidget] = None
 
         if self.definition.description:
-            desc = QLabel(self.definition.description, self)
+            self.desc_button = QPushButton("", self)
+            self.desc_button.setObjectName("desc-toggle")
+            self.desc_button.setProperty("variant", "ghost")
+            self.desc_button.setCursor(Qt.CursorShape.PointingHandCursor)
+            self.desc_button.setToolTip(self.definition.description)
+            self.desc_button.clicked.connect(self.toggle_description)
+            header.addWidget(self.desc_button)
+
+            self.desc_box = QWidget(self)
+            desc_layout = QVBoxLayout(self.desc_box)
+            desc_layout.setContentsMargins(0, 6, 0, 2)
+            desc_layout.setSpacing(0)
+
+            desc = QLabel(self.definition.description, self.desc_box)
             desc.setProperty("role", "panel-desc")
             desc.setWordWrap(True)
-            root.addWidget(desc)
-            root.addSpacing(6)
+            desc_layout.addWidget(desc)
+            self.desc_box.setVisible(ToolPanel.DESCRIPTION_EXPANDED)
+
+        header.addStretch(1)
+        root.addLayout(header)
+
+        if self.desc_box is not None:
+            root.addWidget(self.desc_box)
+            self._sync_desc_button()
 
         scroll = QScrollArea(self)
         scroll.setObjectName("panel-scroll")
@@ -293,6 +324,22 @@ class ToolPanel(QWidget):
 
         self.build_footer(root)
         root.addLayout(self._build_actions())
+
+    def toggle_description(self) -> None:
+        """展开 / 收起功能说明（状态记在类属性上，新页面沿用）。"""
+        if self.desc_box is None:
+            return
+        expanded = self.desc_box.isHidden()
+        self.desc_box.setVisible(expanded)
+        ToolPanel.DESCRIPTION_EXPANDED = expanded
+        self._sync_desc_button()
+
+    def _sync_desc_button(self) -> None:
+        if self.desc_button is None or self.desc_box is None:
+            return
+        # 用 isHidden 而不是 isVisible：窗口尚未显示时 isVisible 恒为 False
+        expanded = not self.desc_box.isHidden()
+        self.desc_button.setText("▾ 说明" if expanded else "▸ 说明")
 
     def _build_row(self, spec: ParamSpec) -> _ParamRow:
         row = _ParamRow(spec, self)

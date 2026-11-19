@@ -372,6 +372,35 @@ QPushButton#path-browse {{
     padding: 6px 10px;
 }}
 
+/* ---------- 可折叠的「说明」与「日志」开关 ---------- */
+QPushButton#desc-toggle {{
+    background: transparent;
+    border: 1px solid transparent;
+    color: {ACCENT_DEEP};
+    font-size: 11px;
+    min-width: 0;
+    padding: 1px 8px;
+}}
+QPushButton#desc-toggle:hover {{
+    background: {BG_RAISED};
+    border: 1px solid {BG_RAISED};
+    color: {ACCENT};
+}}
+
+QPushButton#log-toggle {{
+    background: transparent;
+    border: 1px solid transparent;
+    color: {TEXT_FAINT};
+    font-size: 11px;
+    min-width: 0;
+    padding: 0;
+}}
+QPushButton#log-toggle:hover {{
+    background: {BG_RAISED};
+    border: 1px solid {BG_RAISED};
+    color: {ACCENT};
+}}
+
 /* ---------- 日志与进度 ---------- */
 QFrame#log-pane {{
     background: {BG_DEEP};
