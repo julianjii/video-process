@@ -1,18 +1,17 @@
 # -*- coding: utf-8 -*-
-"""PyQt6 主窗口：左侧功能导航 + 右侧参数面板 + 底部日志进度区 + 状态栏。"""
+"""PyQt6 主窗口：左侧功能导航 + 右侧功能页（参数 + 本页日志）+ 状态栏。
+
+每个功能页各自持有日志与进度，后台任务的输出只回传给发起任务的功能页；
+ffmpeg/AMF 自检、设置保存与任务调度等系统级消息集中到「系统日志」页。
+"""
 
 from __future__ import annotations
 
 import os
-from typing import Dict, List, Optional
+import sys
+from typing import Dict, List, Optional, Sequence, TextIO, Tuple
 
-from PyQt6.QtCore import (
-    QSize,
-    Qt,
-    QThread,
-    QTimer,
-    pyqtSignal,
-)
+from PyQt6.QtCore import QSize, Qt, QTimer
 from PyQt6.QtGui import (
     QAction,
     QBrush,
@@ -26,13 +25,11 @@ from PyQt6.QtGui import (
 from PyQt6.QtWidgets import (
     QApplication,
     QFrame,
-    QHBoxLayout,
     QLabel,
     QListWidget,
     QListWidgetItem,
     QMainWindow,
     QMessageBox,
-    QPushButton,
     QSplitter,
     QStackedWidget,
     QStyle,
@@ -43,28 +40,35 @@ from PyQt6.QtWidgets import (
 )
 
 from .. import __version__
-from .._frozen import bundled_ffmpeg_dir, resource_path
+from .._frozen import resource_path
 from .._io import ensure_utf8_stdio
-from ..core.ffmpeg import check_ffmpeg
-from ..core.models import LogLevel, ProgressInfo, Settings, TaskResult
-from ..core.probe import check_amf_support
-from ..defs import NAV_GROUPS, TOOL_DEFS
+from ..core.models import LogLevel, Settings
+from ..defs import NAV_GROUPS, SYSTEM_GROUP, SYSTEM_TOOL_IDS, TOOL_DEFS
 from ..param_spec import ToolDefinition
 from ..settings_store import load_settings
 from . import theme
-from .panels import create_panel
-from .tasks import TaskRunner
-from .widgets import LogView, TaskProgress
+from .feature_window import create_feature_window
+from .task_hub import TaskHub
+from .tool_page import SystemLogPage, ToolPage
+from .window_shell import (
+    HINT,
+    EnvChecker,
+    StatusBar,
+    TitleBar,
+    env_log_lines,
+)
 
 #: 导航项自定义数据：分组标题标记
 ROLE_IS_GROUP = Qt.ItemDataRole.UserRole + 1
 #: 导航项自定义数据：工具 id
 ROLE_TOOL_ID = Qt.ItemDataRole.UserRole
 
+#: 系统日志页的 UI 专用 id（不进入 defs，因此不会多出 CLI 子命令）
+SYSTEM_LOG_ID = "system-log"
+
 #: 应用图标（相对项目根 / 打包资源根）。缺失时程序照常运行，
 #: 只是任务栏与标题栏用 Qt 默认图标
 APP_ICON_REL = os.path.join("assets", "app.ico")
-
 
 def load_app_icon() -> Optional[QIcon]:
     """加载应用图标，找不到返回 None。
@@ -77,24 +81,6 @@ def load_app_icon() -> Optional[QIcon]:
         return None
     icon = QIcon(path)
     return None if icon.isNull() else icon
-
-
-class _EnvChecker(QThread):
-    """环境自检：check_ffmpeg / check_amf_support 会 spawn 子进程，
-    放到后台线程执行以免启动卡顿。"""
-
-    finished = pyqtSignal(bool, str, list)
-
-    def run(self) -> None:  # noqa: D102 - QThread 入口
-        try:
-            ok, _ffmpeg, _ffprobe, version = check_ffmpeg()
-        except Exception:
-            ok, version = False, ""
-        try:
-            amf = check_amf_support()
-        except Exception:
-            amf = []
-        self.finished.emit(bool(ok), str(version or ""), list(amf or []))
 
 
 class _NavDelegate(QStyledItemDelegate):
@@ -146,28 +132,23 @@ class _NavDelegate(QStyledItemDelegate):
 
 
 class VideoProcessWindow(QMainWindow):
-    """视频处理工具集主窗口，同时充当面板的 host。"""
+    """视频处理工具集主窗口，同时充当各功能页的 WindowHost。"""
 
     def __init__(self) -> None:
         super().__init__()
         self.settings: Settings = load_settings()
 
         self._nav_items: List[Optional[str]] = []
-        self._panels: Dict[str, QWidget] = {}
-        self._task_title = ""
-        self._task_panel: Optional[QWidget] = None
-
-        self._runner = TaskRunner(self)
-        self._runner.logRequested.connect(self.log_message)
-        self._runner.progressChanged.connect(self.update_progress)
-        self._runner.finished.connect(self._on_task_finished)
+        self._pages: Dict[str, ToolPage] = {}
+        self._system_page: Optional[SystemLogPage] = None
+        self.hub = TaskHub(self.log_system, self)
 
         self.setWindowTitle(f"视频处理工具集 v{__version__}")
         self.resize(1240, 840)
         self.setMinimumSize(940, 620)
 
+        self.status_bar = StatusBar.attach(self, HINT)
         self._build_ui()
-        self._build_status_bar()
         self._build_shortcuts()
 
         # 界面就绪后再做环境自检
@@ -183,11 +164,12 @@ class VideoProcessWindow(QMainWindow):
         root.setContentsMargins(0, 0, 0, 0)
         root.setSpacing(0)
 
-        root.addWidget(self._build_title_bar())
+        self._title_bar = TitleBar("视频处理工具集", central)
+        root.addWidget(self._title_bar)
 
         body = QSplitter(Qt.Orientation.Horizontal, central)
         body.setHandleWidth(1)
-        # 先建内容区：导航初始化时会立刻挂载首个面板，需要 _stack 已就绪
+        # 先建内容区：导航初始化时会立刻挂载首个功能页，需要 _stack 已就绪
         content_pane = self._build_content_pane()
         nav_pane = self._build_nav_pane()
         body.addWidget(nav_pane)
@@ -200,38 +182,6 @@ class VideoProcessWindow(QMainWindow):
         root.addWidget(body, 1)
 
         self.setCentralWidget(central)
-
-    # ------------------------------------------------------------------
-    def _build_title_bar(self) -> QWidget:
-        bar = QFrame(self)
-        bar.setObjectName("title-bar")
-        bar.setFixedHeight(48)
-
-        layout = QHBoxLayout(bar)
-        layout.setContentsMargins(16, 0, 16, 0)
-        layout.setSpacing(10)
-
-        title = QLabel("视频处理工具集", bar)
-        title.setObjectName("app-title")
-        layout.addWidget(title)
-
-        version = QLabel(f"v{__version__}", bar)
-        version.setObjectName("app-version")
-        layout.addWidget(version)
-
-        layout.addStretch(1)
-
-        self._env_ffmpeg = QLabel("检测中…", bar)
-        self._env_ffmpeg.setProperty("chip", "env")
-        self._env_ffmpeg.setProperty("state", "")
-        layout.addWidget(self._env_ffmpeg)
-
-        self._env_amf = QLabel("AMF: 检测中…", bar)
-        self._env_amf.setProperty("chip", "env")
-        self._env_amf.setProperty("state", "")
-        layout.addWidget(self._env_amf)
-
-        return bar
 
     def _build_nav_pane(self) -> QWidget:
         pane = QFrame(self)
@@ -251,7 +201,7 @@ class VideoProcessWindow(QMainWindow):
         self._nav_list.setItemDelegate(_NavDelegate(self._nav_list))
         layout.addWidget(self._nav_list, 1)
 
-        # 先连接再填充，保证初始选中项也能触发面板挂载
+        # 先连接再填充，保证初始选中项也能触发页面挂载
         self._nav_list.currentRowChanged.connect(self._on_nav_changed)
         self._build_nav()
         return pane
@@ -263,88 +213,50 @@ class VideoProcessWindow(QMainWindow):
         layout.setSpacing(0)
 
         self._stack = QStackedWidget(pane)
+        # 系统日志页常驻：环境自检可能早于用户访问它就产生消息
+        self._system_page = SystemLogPage(self._stack)
+        self._stack.addWidget(self._system_page)
         layout.addWidget(self._stack, 1)
-        layout.addWidget(self._build_log_pane())
         return pane
-
-    def _build_log_pane(self) -> QWidget:
-        pane = QFrame(self)
-        pane.setObjectName("log-pane")
-        pane.setMinimumHeight(230)
-
-        layout = QVBoxLayout(pane)
-        layout.setContentsMargins(12, 8, 12, 10)
-        layout.setSpacing(6)
-
-        header = QHBoxLayout()
-        header.setContentsMargins(0, 0, 0, 0)
-        header.setSpacing(8)
-
-        label = QLabel("日志输出", pane)
-        label.setObjectName("log-header-label")
-        header.addWidget(label)
-        header.addStretch(1)
-
-        clear = QPushButton("清空", pane)
-        clear.setProperty("variant", "ghost")
-        clear.setCursor(Qt.CursorShape.PointingHandCursor)
-        clear.clicked.connect(self.action_clear_log)
-        header.addWidget(clear)
-        layout.addLayout(header)
-
-        self._progress = TaskProgress(pane)
-        layout.addWidget(self._progress)
-
-        self._log_view = LogView(parent=pane)
-        layout.addWidget(self._log_view, 1)
-        return pane
-
-    def _build_status_bar(self) -> None:
-        bar = QFrame(self)
-        bar.setObjectName("status-bar")
-
-        layout = QHBoxLayout(bar)
-        layout.setContentsMargins(16, 0, 16, 0)
-        layout.setSpacing(12)
-
-        self._task_state = QLabel("空闲", bar)
-        layout.addWidget(self._task_state)
-        layout.addStretch(1)
-
-        hint = QLabel(
-            "Ctrl+Q 退出 · Ctrl+C 停止任务 · Ctrl+L 清空日志 · F1 快捷键", bar
-        )
-        hint.setProperty("role", "param-help")
-        layout.addWidget(hint)
-
-        status = self.statusBar()
-        status.setSizeGripEnabled(False)
-        status.setFixedHeight(28)
-        status.addWidget(bar, 1)
 
     # ==================================================================
     # 导航
     # ==================================================================
     def _build_nav(self) -> None:
         for group_name, tool_ids in NAV_GROUPS:
-            group_item = QListWidgetItem(group_name)
-            group_item.setData(ROLE_IS_GROUP, True)
-            group_item.setFlags(Qt.ItemFlag.NoItemFlags)
-            self._nav_list.addItem(group_item)
-            self._nav_items.append(None)
-
+            self._add_nav_group(group_name)
             for tool_id in tool_ids:
                 definition = TOOL_DEFS[tool_id]
-                item = QListWidgetItem(f"  {definition.title}")
-                item.setData(ROLE_TOOL_ID, tool_id)
-                item.setToolTip(definition.title)
-                self._nav_list.addItem(item)
-                self._nav_items.append(tool_id)
+                self._add_nav_tool(
+                    definition.title, tool_id, definition.title
+                )
+
+        self._add_nav_group(SYSTEM_GROUP)
+        self._add_nav_tool(
+            "系统日志", SYSTEM_LOG_ID, "ffmpeg/AMF 自检与任务调度信息"
+        )
+        for tool_id in SYSTEM_TOOL_IDS:
+            definition = TOOL_DEFS[tool_id]
+            self._add_nav_tool(definition.title, tool_id, definition.title)
 
         for index, tool_id in enumerate(self._nav_items):
             if tool_id:
                 self._nav_list.setCurrentRow(index)
                 break
+
+    def _add_nav_group(self, name: str) -> None:
+        item = QListWidgetItem(name)
+        item.setData(ROLE_IS_GROUP, True)
+        item.setFlags(Qt.ItemFlag.NoItemFlags)
+        self._nav_list.addItem(item)
+        self._nav_items.append(None)
+
+    def _add_nav_tool(self, label: str, tool_id: str, tooltip: str) -> None:
+        item = QListWidgetItem(f"  {label}")
+        item.setData(ROLE_TOOL_ID, tool_id)
+        item.setToolTip(tooltip)
+        self._nav_list.addItem(item)
+        self._nav_items.append(tool_id)
 
     def _on_nav_changed(self, row: int) -> None:
         if not (0 <= row < len(self._nav_items)):
@@ -355,21 +267,28 @@ class VideoProcessWindow(QMainWindow):
         self.switch_to(tool_id)
 
     def switch_to(self, tool_id: str) -> None:
-        """切换到指定工具面板（面板按需创建并缓存）。"""
-        panel = self._ensure_panel(tool_id)
-        if panel is None:
+        """切换到指定功能页（页面按需创建并缓存，日志随之保留）。"""
+        page = self._ensure_page(tool_id)
+        if page is None:
             return
 
-        self._stack.setCurrentWidget(panel)
+        self._stack.setCurrentWidget(page)
 
-        if self._runner.running and panel is not self._task_panel:
-            self.log_message(
-                f"（{self._task_title} 仍在后台运行，结果会回传给发起面板）",
+        if tool_id == SYSTEM_LOG_ID:
+            return
+
+        owner = self.hub.owner
+        if self.hub.running and owner is not None and owner is not page:
+            title = getattr(getattr(owner, "definition", None), "title", "")
+            self.log_system(
+                f"（{title} 仍在后台运行，结果会回传给发起面板）",
                 LogLevel.WARNING,
             )
 
-        if tool_id == "settings" and hasattr(panel, "load_from_settings"):
-            panel.load_from_settings()
+        if tool_id == "settings" and isinstance(page, ToolPage):
+            panel = page.panel
+            if hasattr(panel, "load_from_settings"):
+                panel.load_from_settings()
 
     # ==================================================================
     # 快捷键
@@ -392,78 +311,42 @@ class VideoProcessWindow(QMainWindow):
     # 环境自检
     # ==================================================================
     def _check_environment(self) -> None:
-        self._env_checker = _EnvChecker(self)
+        self._env_checker = EnvChecker(self)
         self._env_checker.finished.connect(self._render_env)
         self._env_checker.start()
 
-    def _render_env(self, ok: bool, version: str, amf: List[str]) -> None:
-        # 打包版会自带一份 ffmpeg，标明来源便于判断当前用在哪一份
-        source = "内置" if bundled_ffmpeg_dir() else "系统"
-
-        if ok:
-            short = version.split(" Copyright")[0] if version else "未知版本"
-            self._set_env_chip(
-                self._env_ffmpeg, f"● ffmpeg（{source}）: {short}", "ok"
-            )
-            self.log_message(f"ffmpeg 检测通过（{source}）: {short}", LogLevel.SUCCESS)
-        else:
-            self._set_env_chip(
-                self._env_ffmpeg, "● 未检测到 ffmpeg / ffprobe", "error"
-            )
-            self.log_message(
-                "未检测到 ffmpeg/ffprobe，请先安装并加入 PATH", LogLevel.ERROR
-            )
+    def _render_env(
+        self, ok: bool, version: str, amf: List[str]
+    ) -> None:
+        self._title_bar.env.render(ok, version, amf)
+        for line, level in env_log_lines(ok, version):
+            self.log_system(line, level)
+        if not ok:
             self.notify(
                 "未检测到 ffmpeg/ffprobe，所有功能将不可用", "error", timeout=10
             )
 
-        if amf:
-            self._set_env_chip(self._env_amf, f"● AMF: {', '.join(amf)}", "ok")
-        else:
-            self._set_env_chip(
-                self._env_amf, "● AMF: 不可用（AMD 相关模式将失败）", "warn"
-            )
-
-    @staticmethod
-    def _set_env_chip(label: QLabel, text: str, state: str) -> None:
-        label.setText(text)
-        label.setProperty("state", state)
-        label.style().unpolish(label)
-        label.style().polish(label)
-        label.adjustSize()
-
     # ==================================================================
-    # 日志 / 进度 / 通知
+    # 日志 / 通知
     # ==================================================================
-    def log_message(self, message: str, level: LogLevel = LogLevel.INFO) -> None:
-        self._log_view.write_line(message, level)
+    def log_system(
+        self, message: str, level: LogLevel = LogLevel.INFO
+    ) -> None:
+        page = self._system_page
+        if page is not None:
+            page.log_message(message, level)
 
-    def update_progress(self, info: ProgressInfo) -> None:
-        self._progress.update_progress(
-            info.clamped(), info.current_file, info.detail
-        )
-
-    def notify(self, message: str, severity: str = "information",
-               timeout: int = 5) -> None:
-        """在状态栏左侧短暂提示。"""
-        first_line = (message or "").splitlines()
-        first_line = first_line[0] if first_line else ""
-        if severity == "error":
-            self._task_state.setText(f"✖ {first_line}")
-        elif severity == "warning":
-            self._task_state.setText(f"! {first_line}")
-        else:
-            self._task_state.setText(first_line)
-        QTimer.singleShot(max(1, timeout) * 1000, self._reset_task_state)
-
-    def _reset_task_state(self) -> None:
-        if self._runner.running:
-            self._task_state.setText(f"运行中：{self._task_title}")
-        else:
-            self._task_state.setText("空闲")
+    def notify(
+        self, message: str, severity: str = "information", timeout: int = 5
+    ) -> None:
+        self.status_bar.notify(message, severity, timeout)
 
     def action_clear_log(self) -> None:
-        self._log_view.clear_log()
+        """清空当前页面（功能页或系统日志页）的日志。"""
+        page = self._stack.currentWidget()
+        clear = getattr(page, "clear_log", None)
+        if callable(clear):
+            clear()
 
     def action_toggle_help(self) -> None:
         QMessageBox.information(
@@ -471,92 +354,70 @@ class VideoProcessWindow(QMainWindow):
             "快捷键",
             "Ctrl+Q  退出\n"
             "Ctrl+C  停止任务\n"
-            "Ctrl+L  清空日志\n"
+            "Ctrl+L  清空当前功能日志\n"
             "F1      显示本帮助\n\n"
             "导航：↑↓ 切换功能，Enter 选中\n"
-            "参数：Tab 在控件间移动，路径可直接拖入",
+            "参数：Tab 在控件间移动，路径可直接拖入\n"
+            "日志：每个功能页下方各有一份，分隔条可拖动",
         )
 
     # ==================================================================
-    # 任务调度（PanelHost 实现）
+    # 任务调度（WindowHost 实现）
     # ==================================================================
-    def is_task_cancelled(self) -> bool:
-        return self._runner.is_cancelled()
-
-    def begin_task(self, title: str) -> bool:
-        if self._runner.running:
+    def reserve_task(self, page: object) -> bool:
+        if not self.hub.reserve(page):
             self.notify("已有任务正在运行", "warning", timeout=3)
+            self.log_system(
+                "已有任务正在运行，已拒绝新的执行请求", LogLevel.WARNING
+            )
             return False
-        self._task_title = title
-        self.log_message("")
-        self.log_message(f"═══ 开始执行：{title} ═══", LogLevel.SUCCESS)
-        self._progress.set_busy()
-        self._task_state.setText(f"运行中：{title}")
+        title = getattr(getattr(page, "definition", None), "title", "")
+        self.status_bar.set_running(True, title)
         return True
 
-    def end_task(self, result: Optional[TaskResult] = None) -> None:
-        self._progress.set_idle(True)
-        self._task_title = ""
-        self._reset_task_state()
+    def release_task(self, page: object) -> None:
+        self.hub.release(page)
+        if not self.hub.running:
+            self.status_bar.set_running(False)
 
-        if result is None:
-            return
-        cancelled = "取消" in (result.message or "")
-        if result.success:
-            self.log_message(f"✔ {result.message}", LogLevel.SUCCESS)
-            self.notify(result.message, "information", timeout=6)
-        elif cancelled:
-            self.log_message(f"■ {result.message}", LogLevel.WARNING)
-            self.notify(result.message, "warning", timeout=5)
-        else:
-            self.log_message(f"✖ {result.message}", LogLevel.ERROR)
-            self.notify(result.message, "error", timeout=10)
-
-    def run_task(self, definition: ToolDefinition, values: dict,
-                 panel: object = None) -> bool:
-        if not self.begin_task(definition.title):
-            return False
-        self._task_panel = panel
-        if not self._runner.start(definition, values, self.settings):
-            self._task_panel = None
-            self.end_task(None)
-            return False
-        return True
+    def start_task(
+        self, page: object, definition: ToolDefinition, values: dict
+    ) -> bool:
+        return self.hub.start(page, definition, values, self.settings)
 
     def cancel_task(self) -> None:
-        if not self._runner.running:
+        if not self.hub.running:
             self.notify("当前没有正在运行的任务", "information", timeout=2)
             return
-        self._runner.cancel()
-        self.log_message(
+        self.hub.cancel()
+        self.log_system(
             "正在请求停止…（等待当前 ffmpeg 进程退出）", LogLevel.WARNING
         )
 
     def action_cancel_task(self) -> None:
         self.cancel_task()
 
-    def _on_task_finished(self, result: TaskResult) -> None:
-        self.end_task(result)
-        # 回传给发起任务的面板：运行期间用户可能已经切换了导航
-        panel = self._task_panel or self._stack.currentWidget()
-        self._task_panel = None
-        if panel is not None and hasattr(panel, "on_result"):
-            panel.on_result(result)
+    def is_task_cancelled(self) -> bool:
+        return self.hub.is_cancelled()
 
     # ==================================================================
-    # 供面板调用的跨面板能力
+    # 供功能页调用的跨页能力
     # ==================================================================
-    def _ensure_panel(self, tool_id: str) -> Optional[QWidget]:
-        """按需创建并缓存面板（不切换导航）。"""
+    def _ensure_page(self, tool_id: str) -> Optional[QWidget]:
+        """按需创建并缓存功能页（不切换导航）。"""
+        if tool_id == SYSTEM_LOG_ID:
+            return self._system_page
+
         definition = TOOL_DEFS.get(tool_id)
         if definition is None:
             return None
-        panel = self._panels.get(tool_id)
-        if panel is None:
-            panel = create_panel(definition, self, self._stack)
-            self._panels[tool_id] = panel
-            self._stack.addWidget(panel)
-        return panel
+
+        page = self._pages.get(tool_id)
+        if page is None:
+            page = ToolPage(definition, self, self._stack)
+            self._pages[tool_id] = page
+            self._stack.addWidget(page)
+        return page
 
     def fill_remove_segments(
         self,
@@ -564,13 +425,13 @@ class VideoProcessWindow(QMainWindow):
         input_path: str = "",
         navigate: bool = True,
     ) -> None:
-        """把广告区间 / 同名视频填入「片段删除」面板。
+        """把广告区间 / 同名视频填入「片段删除」页面。
 
         navigate=False 时不切走导航：时间线计算器拖入文件后
-        仍停在原面板展示结果，用户切过去即可看到已填好的参数。
+        仍停在原页面展示结果，用户切过去即可看到已填好的参数。
         """
-        panel = self._ensure_panel("remove-segments")
-        if panel is None:
+        page = self._ensure_page("remove-segments")
+        if not isinstance(page, ToolPage):
             return
 
         if navigate:
@@ -579,51 +440,38 @@ class VideoProcessWindow(QMainWindow):
                     self._nav_list.setCurrentRow(index)
                     break
 
+        panel = page.panel
         try:
             parts: List[str] = []
-            if csv and hasattr(panel, "fill_value") and panel.fill_value(
-                "segments", csv
-            ):
+            if csv and panel.fill_value("segments", csv):
                 parts.append(f"时间段 {csv}")
-            if input_path and hasattr(panel, "fill_value") and panel.fill_value(
-                "input_path", input_path
-            ):
+            if input_path and panel.fill_value("input_path", input_path):
                 parts.append(f"视频 {input_path}")
             if parts:
-                self.notify(
-                    "已填入「片段删除」：" + "；".join(parts),
-                    "information",
-                    timeout=5,
-                )
+                message = "已填入「片段删除」：" + "；".join(parts)
+                page.log_message(message, LogLevel.SUCCESS)
+                self.notify(message, "information", timeout=5)
             elif csv or input_path:
                 self.notify("填入失败：未找到对应字段", "error", timeout=5)
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 - 回填失败不应中断界面
             self.notify(f"填入失败: {exc}", "error", timeout=5)
 
-    def reload_panels(self, keep: object = None) -> None:
-        """全局设置变更后重建面板。
+    def reload_defaults(self, keep: object = None) -> None:
+        """全局设置变更后刷新各页参数默认值（各页日志保留）。
 
-        参数默认值在面板创建时从设置快照，且面板是按需创建后缓存的，
-        不重建的话用户改完设置切回去看到的还是旧默认值。
+        参数默认值在面板创建时从设置快照，因此只替换面板对象，
+        外层功能页与其日志视图不动。正在运行任务的页面跳过重建。
         """
-        row = self._nav_list.currentRow()
-        current = self._nav_items[row] if 0 <= row < len(self._nav_items) else None
-
-        for tool_id, panel in list(self._panels.items()):
-            if panel is keep:
+        for page in list(self._pages.values()):
+            if page is keep:
                 continue
-            self._stack.removeWidget(panel)
-            panel.deleteLater()
-            del self._panels[tool_id]
-
-        if current and current not in self._panels:
-            self.switch_to(current)
+            page.rebuild_panel()
 
     # ==================================================================
     # 关闭保护
     # ==================================================================
     def closeEvent(self, event: QCloseEvent) -> None:
-        if self._runner.running:
+        if self.hub.running:
             answer = QMessageBox.question(
                 self,
                 "任务正在运行",
@@ -634,8 +482,8 @@ class VideoProcessWindow(QMainWindow):
             if answer != QMessageBox.StandardButton.Yes:
                 event.ignore()
                 return
-            self._runner.cancel()
-            self._runner.wait(3000)
+            self.hub.cancel()
+            self.hub.wait(3000)
         event.accept()
 
 
@@ -644,15 +492,87 @@ def create_window() -> VideoProcessWindow:
     return VideoProcessWindow()
 
 
-def run_app(argv: Optional[List[str]] = None) -> int:
-    """启动 Qt 图形界面。"""
+# ---------------------------------------------------------------------------
+# 启动参数
+# ---------------------------------------------------------------------------
+def _resolve_startup(
+    argv: Sequence[str],
+) -> Tuple[Optional[str], List[str], str]:
+    """解析启动参数：功能名 / --list / --help。
+
+    返回 (tool_id, 传给 Qt 的剩余参数, 动作)，
+    动作为 ``gui`` / ``list`` / ``help`` / ``error``。
+    """
+    tool_id: Optional[str] = None
+    qt_args: List[str] = []
+
+    for token in argv:
+        if token == "--list":
+            return None, [], "list"
+        if token in ("-h", "--help") and tool_id is None and not qt_args:
+            return None, [], "help"
+        if tool_id is None and not token.startswith("-"):
+            tool_id = token
+        else:
+            qt_args.append(token)
+
+    if tool_id is None:
+        return None, qt_args, "gui"
+    if tool_id not in TOOL_DEFS:
+        return tool_id, qt_args, "error"
+    return tool_id, qt_args, "gui"
+
+
+def _print_tools(stream: Optional[TextIO] = None) -> None:
+    stream = stream or sys.stdout
+    print("可用功能（python main.py <功能名> 单独打开）:", file=stream)
+    groups = list(NAV_GROUPS) + [(SYSTEM_GROUP, SYSTEM_TOOL_IDS)]
+    for group, tool_ids in groups:
+        print(f"  [{group}]", file=stream)
+        for tool_id in tool_ids:
+            print(
+                f"    {tool_id:<18} {TOOL_DEFS[tool_id].title}",
+                file=stream,
+            )
+
+
+def _print_usage(stream: Optional[TextIO] = None) -> None:
+    stream = stream or sys.stdout
+    print(
+        "用法:\n"
+        "  python main.py                打开完整界面\n"
+        "  python main.py <功能名>        只打开该功能的独立窗口\n"
+        "  python main.py --list          列出可用功能名\n\n"
+        "示例: python main.py merge",
+        file=stream,
+    )
+
+
+def run_app(argv: Optional[Sequence[str]] = None) -> int:
+    """启动 Qt 图形界面（主窗口或单功能窗口）。"""
+    ensure_utf8_stdio()
+    args = list(sys.argv[1:] if argv is None else argv)
+    tool_id, qt_args, action = _resolve_startup(args)
+
+    if action == "list":
+        _print_tools()
+        return 0
+    if action == "help":
+        _print_usage()
+        return 0
+    if action == "error":
+        print(f"未知功能: {tool_id}", file=sys.stderr)
+        _print_tools(sys.stderr)
+        print("", file=sys.stderr)
+        _print_usage(sys.stderr)
+        return 2
+
     app = QApplication.instance()
     owns_app = app is None
     if app is None:
-        app = QApplication(argv or [])
-
-    # 无控制台模式下 sys.stdout 为 None，先补空实现，避免第三方代码 print() 崩溃
-    ensure_utf8_stdio()
+        app = QApplication(
+            [sys.argv[0] if sys.argv else "video-process", *qt_args]
+        )
 
     icon = load_app_icon()
     if icon is not None:
@@ -660,7 +580,9 @@ def run_app(argv: Optional[List[str]] = None) -> int:
 
     theme.apply_theme(app)
 
-    window = create_window()
+    window = (
+        create_feature_window(tool_id) if tool_id else create_window()
+    )
     if icon is not None:
         window.setWindowIcon(icon)
     window.show()

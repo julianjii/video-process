@@ -68,7 +68,7 @@ class SettingsPanel(ToolPanel):
             self.host.reload_panels(keep=self)
             self._set_status("设置已保存", ok=True)
             self.host.notify("设置已保存", "information", timeout=3)
-            self.host.log_message("全局设置已保存", LogLevel.SUCCESS)
+            self.host.log_system("全局设置已保存", LogLevel.SUCCESS)
         else:
             self._set_status("保存失败，请检查配置文件权限", ok=False)
             self.host.notify("设置保存失败", "error", timeout=5)

@@ -473,8 +473,8 @@ QScrollBar::add-page, QScrollBar::sub-page {{ background: transparent; }}
 QSplitter::handle {{
     background: {BG_RAISED};
 }}
-QSplitter::handle:horizontal {{ height: 1px; }}
-QSplitter::handle:vertical {{ width: 1px; }}
+QSplitter::handle:horizontal {{ width: 1px; }}
+QSplitter::handle:vertical {{ height: 1px; }}
 
 /* ---------- 对话框 ---------- */
 QDialog {{

@@ -259,6 +259,7 @@ REMOTE_SUBTITLE = ToolDefinition(
             file_patterns=MEDIA_EXTS,
             help=(
                 "可多选文件、添加文件夹（递归扫描音频与视频），或直接拖入；"
+                "列表内按 Delete 键或右键可删除选中项，「清空」可一次移除全部；"
                 "mp4/m4a 等格式会先转成 FLAC 再上传"
             ),
         ),

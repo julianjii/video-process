@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""工具箱：时间线计算器、文本繁简转换与全局设置。"""
+"""工具箱：时间线计算器、文本繁简转换；全局设置归入「系统」分组。"""
 
 from __future__ import annotations
 
@@ -77,11 +77,11 @@ ZH_CONVERT = ToolDefinition(
     confirm_before_run=False,
 )
 
-#: 全局设置
+#: 全局设置（导航里排在「系统日志」之后，不在工具箱）
 SETTINGS = ToolDefinition(
     id="settings",
     title="全局设置",
-    group=GROUP,
+    group="系统",
     description=(
         "这些选项会作为各工具的默认值使用。\n"
         f"配置文件: {CONFIG_PATH}"
@@ -158,6 +158,7 @@ SETTINGS = ToolDefinition(
     confirm_before_run=False,
 )
 
-DEFS = [TIMELINE, ZH_CONVERT, SETTINGS]
+#: 工具箱子命令（全局设置没有业务函数，不参与 DEFS）
+DEFS = [TIMELINE, ZH_CONVERT]
 
 __all__ = ["GROUP", "DEFS", "TIMELINE", "ZH_CONVERT", "SETTINGS"]

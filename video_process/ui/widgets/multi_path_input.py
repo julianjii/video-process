@@ -20,6 +20,7 @@ from PyQt6.QtWidgets import (
     QLabel,
     QListWidget,
     QListWidgetItem,
+    QMenu,
     QPushButton,
     QVBoxLayout,
     QWidget,
@@ -29,12 +30,18 @@ from ...core.paths import clean_path, human_size, scan_audio, scan_files
 
 
 class _DropList(QListWidget):
-    """把拖放事件转发给 MultiPathInput（列表自身占用 viewport，事件到不了父控件）。"""
+    """把拖放、删除键与右键菜单转发给 MultiPathInput。
+
+    列表自身占用 viewport，拖放事件到不了父控件；Delete/Backspace
+    与右键菜单同样在此接管，便于删除选中项或清空整个列表。
+    """
 
     def __init__(self, owner: "MultiPathInput") -> None:
         super().__init__(owner)
         self._owner = owner
         self.setAcceptDrops(True)
+        self.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.customContextMenuRequested.connect(self._show_menu)
 
     def dragEnterEvent(self, event: QDragEnterEvent) -> None:
         self._owner._handle_drag_enter(event)
@@ -44,6 +51,32 @@ class _DropList(QListWidget):
 
     def dropEvent(self, event: QDropEvent) -> None:
         self._owner._handle_drop(event)
+
+    def keyPressEvent(self, event) -> None:
+        if event.key() in (Qt.Key.Key_Delete, Qt.Key.Key_Backspace):
+            self._owner.remove_selected()
+            event.accept()
+            return
+        super().keyPressEvent(event)
+
+    def _show_menu(self, pos) -> None:
+        """右键菜单：删除当前/选中的文件、清空列表。"""
+        index = self.indexAt(pos)
+        if index.isValid() and not self.item(index.row()).isSelected():
+            self.clearSelection()
+            self.setCurrentRow(index.row())
+
+        menu = QMenu(self)
+        remove_action = menu.addAction("删除选中")
+        clear_action = menu.addAction("清空列表")
+        remove_action.setEnabled(bool(self.selectedItems()))
+        clear_action.setEnabled(self.count() > 0)
+
+        chosen = menu.exec(self.viewport().mapToGlobal(pos))
+        if chosen is remove_action:
+            self._owner.remove_selected()
+        elif chosen is clear_action:
+            self._owner.clear()
 
 
 class MultiPathInput(QWidget):
@@ -103,13 +136,15 @@ class MultiPathInput(QWidget):
         add_dir.clicked.connect(self._pick_directory)
         buttons.addWidget(add_dir)
 
-        remove = QPushButton("移除选中", self)
+        remove = QPushButton("删除选中", self)
+        remove.setToolTip("从列表中删除选中的文件（也可在列表内按 Delete 键）")
         remove.setCursor(Qt.CursorShape.PointingHandCursor)
         remove.clicked.connect(self.remove_selected)
         buttons.addWidget(remove)
 
         clear = QPushButton("清空", self)
         clear.setProperty("variant", "ghost")
+        clear.setToolTip("清空整个列表（不会删除磁盘上的文件）")
         clear.setCursor(Qt.CursorShape.PointingHandCursor)
         clear.clicked.connect(self.clear)
         buttons.addWidget(clear)
@@ -199,13 +234,14 @@ class MultiPathInput(QWidget):
         return added
 
     def remove_selected(self) -> None:
+        """删除列表里选中的文件（仅从列表移除，不删除磁盘文件）。"""
         rows = sorted(
             {self._list.row(item) for item in self._list.selectedItems()},
             reverse=True,
         )
         if not rows:
             self.noticeRequested.emit(
-                "请先在列表中选择要移除的文件", "information"
+                "请先在列表中选择要删除的文件", "information"
             )
             return
         for row in rows:
@@ -215,6 +251,7 @@ class MultiPathInput(QWidget):
         self.valueChanged.emit(list(self._paths))
 
     def clear(self) -> None:
+        """清空整个列表（仅从列表移除，不删除磁盘文件）。"""
         if not self._paths:
             return
         self._paths.clear()

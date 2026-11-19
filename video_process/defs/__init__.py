@@ -22,12 +22,17 @@ NAV_GROUPS: List[Tuple[str, List[str]]] = [
     (misc.GROUP, [d.id for d in misc.DEFS]),
 ]
 
+#: 「系统」分组：界面上依次是系统日志页（UI 专用）与下面这些工具
+SYSTEM_GROUP = "系统"
+SYSTEM_TOOL_IDS: List[str] = [misc.SETTINGS.id]
+
 #: 工具 id -> 定义。id 为 kebab 形式
 TOOL_DEFS: Dict[str, ToolDefinition] = {
     d.id: d
     for module in (video, media, subtitle, misc)
     for d in module.DEFS
 }
+TOOL_DEFS[misc.SETTINGS.id] = misc.SETTINGS
 
 
 def get_def(tool_id: str) -> Optional[ToolDefinition]:
@@ -36,16 +41,18 @@ def get_def(tool_id: str) -> Optional[ToolDefinition]:
 
 
 def all_tools() -> List[Tuple[str, ToolDefinition]]:
-    """返回 [(tool_id, 定义), ...]，顺序与导航一致。"""
+    """返回 [(tool_id, 定义), ...]，顺序与导航一致（含「系统」分组）。"""
     return [
         (tool_id, TOOL_DEFS[tool_id])
         for _group, ids in NAV_GROUPS
         for tool_id in ids
-    ]
+    ] + [(tool_id, TOOL_DEFS[tool_id]) for tool_id in SYSTEM_TOOL_IDS]
 
 
 __all__ = [
     "NAV_GROUPS",
+    "SYSTEM_GROUP",
+    "SYSTEM_TOOL_IDS",
     "TOOL_DEFS",
     "ToolDefinition",
     "ParamSpec",

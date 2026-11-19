@@ -9,7 +9,7 @@ from video_process.entry import run
 
 
 def main() -> int:
-    return run()
+    return run(sys.argv[1:])
 
 
 if __name__ == "__main__":

@@ -11,12 +11,14 @@
 
 from __future__ import annotations
 
+from typing import List, Optional
+
 from ._frozen import prepare_ffmpeg_path
 from ._io import ensure_utf8_stdio
 
 
-def run() -> int:
-    """启动图形界面，返回进程退出码。"""
+def run(argv: Optional[List[str]] = None) -> int:
+    """启动图形界面（无参数打开主窗口，功能区名打开独立窗口）。"""
     # Windows 中文控制台默认 GBK，先切到 UTF-8；无控制台时补空实现
     ensure_utf8_stdio()
 
@@ -25,4 +27,4 @@ def run() -> int:
     # 延迟导入，保持本模块尽量轻量
     from .ui.app import run_app
 
-    return run_app()
+    return run_app(argv)

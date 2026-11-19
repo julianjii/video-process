@@ -69,6 +69,10 @@ class LogView(QPlainTextEdit):
         self._pending.clear()
         self.clear()
 
+    def flush(self) -> None:
+        """立即写入待处理的行（测试或退出前使用）。"""
+        self._flush()
+
     # ------------------------------------------------------------------
     def _flush(self) -> None:
         if not self._pending:
