@@ -36,6 +36,8 @@ class RemoteSubtitlePanel(ToolPanel):
         parent: Optional[QWidget] = None,
     ) -> None:
         self._links_view: Optional[QPlainTextEdit] = None
+        #: 已展示的查询地址（按上传顺序，逐条追加，不重复）
+        self._links: List[str] = []
         super().__init__(definition, host, parent)
 
     # ==================================================================
@@ -91,24 +93,46 @@ class RemoteSubtitlePanel(ToolPanel):
         return lines
 
     def start_task(self, values: Dict[str, Any]) -> None:
-        if self._links_view is not None:
-            self._links_view.clear()
+        self._links.clear()
+        self._refresh_links()
         super().start_task(values)
 
+    def add_link(self, link: str) -> None:
+        """每上传受理成功一条，立刻追加到面板（不必等全部任务结束）。"""
+        text = str(link or "").strip()
+        if not text or text in self._links:
+            return
+        self._links.append(text)
+        self._refresh_links(scroll_to_end=True)
+
     def on_result(self, result: TaskResult) -> None:
+        # 兜底：补齐未经过实时通道的链接
         links = list(getattr(result, "links", []) or [])
-        if links and self._links_view is not None:
-            self._links_view.setPlainText("\n".join(links))
+        for link in links:
+            text = str(link or "").strip()
+            if text and text not in self._links:
+                self._links.append(text)
+        self._refresh_links()
+        if self._links:
             self.host.log_message(
-                f"本次共 {len(links)} 个任务查询地址已列在面板中",
+                f"本次共 {len(self._links)} 个任务查询地址已列在面板中",
                 LogLevel.INFO,
             )
         super().on_result(result)
 
     def reset_params(self) -> None:
         super().reset_params()
-        if self._links_view is not None:
-            self._links_view.clear()
+        self._links.clear()
+        self._refresh_links()
+
+    def _refresh_links(self, scroll_to_end: bool = False) -> None:
+        if self._links_view is None:
+            return
+        self._links_view.setPlainText("\n".join(self._links))
+        if scroll_to_end:
+            bar = self._links_view.verticalScrollBar()
+            if bar is not None:
+                bar.setValue(bar.maximum())
 
     # ==================================================================
     # 复制

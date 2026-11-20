@@ -89,6 +89,8 @@ class ToolContext:
 
     on_log: Callable[[str, LogLevel], None] = lambda msg, lvl: None
     on_progress: Callable[[ProgressInfo], None] = lambda p: None
+    #: 实时上报一条可复制的外部链接（如远程任务查询地址），面板收到即显示
+    on_link: Callable[[str], None] = lambda link: None
     is_cancelled: Callable[[], bool] = lambda: False
     settings: Settings = field(default_factory=Settings)
 
@@ -107,6 +109,10 @@ class ToolContext:
 
     def progress(self, percent: Optional[float] = None, file: str = "", detail: str = "") -> None:
         self.on_progress(ProgressInfo(percent=percent, current_file=file, detail=detail))
+
+    def link(self, text: str) -> None:
+        """实时上报一条链接，界面收到后立即追加显示（不必等任务结束）。"""
+        self.on_link(text)
 
     def check_cancel(self) -> None:
         """若用户请求取消则抛出异常，中断当前任务。"""

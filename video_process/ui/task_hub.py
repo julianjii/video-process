@@ -35,6 +35,7 @@ class TaskHub(QObject):
         self._runner = TaskRunner(self)
         self._runner.logRequested.connect(self._on_log)
         self._runner.progressChanged.connect(self._on_progress)
+        self._runner.linkAdded.connect(self._on_link)
         self._runner.finished.connect(self._on_finished)
 
     # ------------------------------------------------------------------
@@ -101,6 +102,12 @@ class TaskHub(QObject):
         owner = self._owner
         if owner is not None:
             owner.update_progress(info)  # type: ignore[attr-defined]
+
+    def _on_link(self, link: str) -> None:
+        """实时链接直接交给发起页的面板追加显示。"""
+        owner = self._owner
+        if owner is not None:
+            owner.add_link(link)  # type: ignore[attr-defined]
 
     def _on_finished(self, result: TaskResult) -> None:
         owner, self._owner = self._owner, None

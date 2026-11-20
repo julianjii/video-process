@@ -599,6 +599,13 @@ class ToolPanel(QWidget):
     def running(self) -> bool:
         return self._running
 
+    def add_link(self, link: str) -> None:
+        """任务执行中实时收到的链接（如远程任务查询地址）。
+
+        默认忽略；需要在执行过程中即时展示链接的面板覆盖此方法。
+        """
+        return None
+
     def on_result(self, result: TaskResult) -> None:
         """任务结尾时回调（主线程）。"""
         self.set_running(False)

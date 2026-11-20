@@ -119,6 +119,10 @@ class ToolPage(QWidget):
     def update_progress(self, info: ProgressInfo) -> None:
         self._log.update_progress(info)
 
+    def add_link(self, link: str) -> None:
+        """后台任务实时上报的链接，交给面板立即显示。"""
+        self._panel.add_link(link)
+
     def clear_log(self) -> None:
         self._log.clear_log()
 

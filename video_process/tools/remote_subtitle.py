@@ -659,7 +659,10 @@ def transcribe_audio_batch(
                     status_url=status_url,
                 )
                 active.append(task)
-                links.append(f"{name}  ->  {status_url}")
+                link_line = f"{name}  ->  {status_url}"
+                links.append(link_line)
+                # 实时推给面板：上传受理成功即显示，不等整批任务结束
+                ctx.link(link_line)
                 ctx.success(
                     f"已受理: {name}（活动任务 "
                     f"{len(active)}/{MAX_ACTIVE_TASKS}）"

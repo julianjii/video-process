@@ -37,6 +37,8 @@ class ToolTask(QObject):
     logRequested = pyqtSignal(str, object)
     #: ProgressInfo
     progressChanged = pyqtSignal(object)
+    #: 实时链接（如远程任务查询地址），收到即显示
+    linkAdded = pyqtSignal(str)
     #: TaskResult
     finished = pyqtSignal(object)
 
@@ -54,6 +56,7 @@ class ToolTask(QObject):
         ctx = ToolContext(
             on_log=lambda msg, lvl: self.logRequested.emit(str(msg), lvl),
             on_progress=lambda info: self.progressChanged.emit(info),
+            on_link=lambda link: self.linkAdded.emit(str(link)),
             is_cancelled=lambda: self._cancel_event.is_set(),
             settings=self._settings,
         )
@@ -86,6 +89,8 @@ class TaskRunner(QObject):
     logRequested = pyqtSignal(str, object)
     #: ProgressInfo
     progressChanged = pyqtSignal(object)
+    #: 实时链接（如远程任务查询地址）
+    linkAdded = pyqtSignal(str)
     #: TaskResult
     finished = pyqtSignal(object)
 
@@ -119,6 +124,7 @@ class TaskRunner(QObject):
 
         self._task.logRequested.connect(self.logRequested)
         self._task.progressChanged.connect(self.progressChanged)
+        self._task.linkAdded.connect(self.linkAdded)
         self._task.finished.connect(self._on_finished)
 
         self._thread.started.connect(self._task.run)

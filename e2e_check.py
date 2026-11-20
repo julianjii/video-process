@@ -208,8 +208,14 @@ def check_remote_subtitle():
             normalize_base_url(" x.gradio.live/ ") == "https://x.gradio.live",
         )
 
+        link_events = []
+        ctx = mkctx()
+        ctx.on_link = lambda text: link_events.append(
+            (text, dict(state["polls"]))
+        )
+
         result = transcribe_audio_batch(
-            base, [audio], language="Chinese", ctx=mkctx(),
+            base, [audio], language="Chinese", ctx=ctx,
             poll_interval=0.05,
         )
         check("remote 转换成功", result.success, result.message)
@@ -227,6 +233,13 @@ def check_remote_subtitle():
             len(result.links) == 1
             and "/api/subtitles/tasks/" in str(result.links[0]),
             str(result.links),
+        )
+        check(
+            "remote 上传受理即回传查询地址（不必等任务结束）",
+            len(link_events) == 1
+            and link_events[0][0] == str(result.links[0])
+            and link_events[0][1] == {},
+            str(link_events),
         )
         check("remote 至少轮询两次",
               state["polls"].get("mock1", 0) >= 2, str(state["polls"]))
