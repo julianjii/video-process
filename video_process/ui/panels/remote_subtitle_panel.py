@@ -88,7 +88,7 @@ class RemoteSubtitlePanel(ToolPanel):
             lines.append(f"  … 其余 {len(files) - 5} 个")
         lines.append("")
         lines.append("转换成功后字幕保存到各音频所在文件夹（同名 .srt 直接覆盖）。")
-        lines.append("视频会先提取音轨为 MP3（保存到视频同目录）再上传。")
+        lines.append("视频会先提取音轨为临时 MP3 再上传，上传后自动删除。")
         lines.append("服务端最多并行 5 个任务，程序会自动排队与轮询。")
         return lines
 

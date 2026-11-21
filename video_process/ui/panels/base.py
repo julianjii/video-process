@@ -32,7 +32,13 @@ from ...core.textio import read_text
 from ...param_spec import ParamSpec, ToolDefinition
 from ..dialogs.confirm import ConfirmDialog, build_summary_lines
 from ..host import PanelHost
-from ..widgets import MultiPathInput, NumberStepper, PathInput, TextDropEdit
+from ..widgets import (
+    ChoiceRadio,
+    MultiPathInput,
+    NumberStepper,
+    PathInput,
+    TextDropEdit,
+)
 
 
 def _file_list_errors(value: Any) -> List[str]:
@@ -133,6 +139,8 @@ class _ParamRow(QWidget):
                 placeholder=spec.help or spec.label,
             )
         if spec.kind == "choice":
+            if spec.choice_style == "radio":
+                return ChoiceRadio(spec.choices or [], spec.default)
             combo = QComboBox()
             combo.setSizePolicy(
                 QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed
@@ -167,6 +175,8 @@ class _ParamRow(QWidget):
         if isinstance(editor, QComboBox):
             data = editor.currentData()
             return editor.currentText() if data is None else data
+        if isinstance(editor, ChoiceRadio):
+            return editor.value
         if isinstance(editor, (PathInput, MultiPathInput)):
             return editor.value
         if isinstance(editor, QPlainTextEdit):
@@ -183,6 +193,8 @@ class _ParamRow(QWidget):
             index = editor.findData(value)
             if index >= 0:
                 editor.setCurrentIndex(index)
+        elif isinstance(editor, ChoiceRadio):
+            editor.set_value(value)
         elif isinstance(editor, PathInput):
             editor.set_value("" if value is None else str(value))
         elif isinstance(editor, MultiPathInput):
@@ -202,7 +214,7 @@ class _ParamRow(QWidget):
         if isinstance(self.editor, MultiPathInput):
             self.editor.set_invalid(invalid)
             return
-        if isinstance(self.editor, NumberStepper):
+        if isinstance(self.editor, (NumberStepper, ChoiceRadio)):
             self.editor.set_invalid(invalid)
             return
         if not isinstance(self.editor, (QCheckBox, QComboBox, QPlainTextEdit)):
@@ -358,6 +370,8 @@ class ToolPanel(QWidget):
             editor.stateChanged.connect(self._on_value_changed)
         elif isinstance(editor, QComboBox):
             editor.currentIndexChanged.connect(self._on_value_changed)
+        elif isinstance(editor, ChoiceRadio):
+            editor.valueChanged.connect(self._on_value_changed)
         elif isinstance(editor, PathInput):
             editor.valueChanged.connect(self._on_value_changed)
             editor.noticeRequested.connect(self._on_path_notice)

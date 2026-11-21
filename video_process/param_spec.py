@@ -26,6 +26,8 @@ class ParamSpec:
     kind: str
     default: Any = None
     choices: Optional[List[Tuple[str, Any]]] = None   # (显示文本, 实际值)
+    # choice 参数的呈现方式："combo" 下拉框（默认）| "radio" 单选按钮
+    choice_style: str = "combo"
     help: str = ""
     required: bool = True
     # 条件显隐：(依赖字段名, 触发显示的值)。值为 None 时表示"非空即显示"

@@ -235,8 +235,8 @@ REMOTE_SUBTITLE = ToolDefinition(
         "服务地址每次手动填写，例如 https://xxxx.gradio.live"
         "（Colab 启动成功后控制台输出的地址）。\n"
         "字幕保存到音频所在文件夹：{音频原名}.srt，同名直接覆盖。\n"
-        "视频会先提取音轨为 MP3（保存到视频同目录）；m4a/wma 等"
-        "服务端无法直接解析的格式会转成临时 MP3 再上传。\n"
+        "视频会先提取音轨为 MP3，与 m4a/wma 等不支持的格式一样"
+        "转成临时文件上传，上传后立即删除。\n"
         "服务端同时最多 5 个排队/处理中任务，程序会自动排队；结果保留 1 小时。"
     ),
     specs=[
@@ -267,6 +267,7 @@ REMOTE_SUBTITLE = ToolDefinition(
             name="language",
             label="音频语种",
             kind="choice",
+            choice_style="radio",
             default="Chinese",
             choices=REMOTE_LANGUAGE_CHOICES,
             required=False,

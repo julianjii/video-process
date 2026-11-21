@@ -263,7 +263,7 @@ def check_remote_subtitle():
         check("remote 同名 SRT 直接覆盖",
               again.success and content == srt_text, again.message)
 
-        # 视频文件：先提取 MP3 保存到视频同目录，再上传 MP3
+        # 视频文件：先提取 MP3 到临时目录上传，上传后删除
         video = make_video(os.path.join(rd, "带音轨.mp4"), 2)
         video_result = transcribe_audio_batch(
             base, [video], language="Chinese", ctx=mkctx(),
@@ -277,13 +277,9 @@ def check_remote_subtitle():
             video_result.message,
         )
         check(
-            "remote 视频 MP3 保存到视频同目录",
-            os.path.isfile(video_mp3) and os.path.getsize(video_mp3) > 0,
+            "remote 视频 MP3 为临时文件（不落在视频目录）",
+            not os.path.exists(video_mp3),
             video_mp3,
-        )
-        check(
-            "remote 视频无 .part.mp3 残留",
-            not os.path.exists(video_mp3 + ".part.mp3"),
         )
         check(
             "remote 上传内容为 MP3",

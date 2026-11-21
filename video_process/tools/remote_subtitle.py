@@ -10,8 +10,9 @@
 服务端同时最多允许 5 个排队/处理中的任务，本模块串行上传、并行轮询，
 名额空出后再上传下一个文件；单任务结果 1 小时后会被清理。
 
-视频文件会先用 ffmpeg 提取音轨为 MP3（保存到视频同目录，参数与
-「音轨提取（转 MP3）」一致），再上传该 MP3。
+视频文件会先用 ffmpeg 提取音轨为 MP3（参数与「音轨提取（转 MP3）」
+一致，但放在系统临时目录里，上传结束即删除，不在源文件目录留下文件），
+再上传该 MP3。
 
 网络层只用标准库（urllib），不引入 requests 等额外依赖。
 """
@@ -29,7 +30,7 @@ import urllib.error
 import urllib.request
 import uuid
 from dataclasses import dataclass, field
-from typing import List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple
 from urllib.parse import urlparse
 
 from ..core.ffmpeg import FFmpegRunner, build_progress_args
@@ -60,11 +61,7 @@ DIRECT_AUDIO_EXTENSIONS = (
 #: 界面/命令行共用的语种选项
 LANGUAGE_CHOICES = [
     ("中文", "Chinese"),
-    ("英语", "English"),
-    ("日语", "Japanese"),
-    ("韩语", "Korean"),
-    ("法语", "French"),
-    ("德语", "German"),
+    ("英文", "English"),
 ]
 
 _SSL_CONTEXT: Optional[ssl.SSLContext] = None
@@ -301,8 +298,8 @@ def _prepare_for_upload(
 ) -> Tuple[str, str]:
     """返回 (实际上传文件, 需要清理的临时目录)。
 
-    视频：提取 MP3 保存到视频同目录（与「音轨提取」一致），永久保留。
-    其余服务端不支持的音频格式：转成临时 MP3，上传后删除。
+    视频与其他服务端无法直接解析的格式一律转成临时 MP3（放在系统临时
+    目录），上传结束即删除，不在源文件目录留下任何文件。
     """
     if not _needs_transcode(path):
         return path, ""
@@ -310,28 +307,17 @@ def _prepare_for_upload(
     name = os.path.basename(path)
 
     if is_video_file(path):
-        target = os.path.splitext(path)[0] + ".mp3"
-        temp_target = target + ".part.mp3"
-        ctx.log(f"  {name}: 视频文件，先提取音轨为 MP3（保存到视频同目录）…")
-        try:
-            _extract_audio_to_mp3(ctx, path, temp_target, index, total)
-            os.replace(temp_target, target)
-        except BaseException:
-            try:
-                if os.path.exists(temp_target):
-                    os.remove(temp_target)
-            except OSError:
-                pass
-            raise
-        ctx.success(f"  音轨已保存: {target}")
-        return target, ""
+        ctx.log(f"  {name}: 视频文件，先提取音轨为临时 MP3…")
+    else:
+        ext = os.path.splitext(path)[1].lower() or "(无扩展名)"
+        ctx.log(
+            f"  {name}: 格式 {ext} 服务端无法直接解析，先转换为临时 MP3…"
+        )
 
-    ext = os.path.splitext(path)[1].lower() or "(无扩展名)"
-    ctx.log(
-        f"  {name}: 格式 {ext} 服务端无法直接解析，先转换为临时 MP3…"
-    )
     temp_dir = tempfile.mkdtemp(prefix="vp-remote-subtitle-")
-    target = os.path.join(temp_dir, f"audio_{index}.mp3")
+    # 保留原文件名（换成 .mp3），服务端看板上的名字更直观
+    stem = os.path.splitext(name)[0] or f"audio_{index}"
+    target = os.path.join(temp_dir, f"{stem}.mp3")
     try:
         _extract_audio_to_mp3(ctx, path, target, index, total)
     except BaseException:
@@ -572,6 +558,15 @@ def transcribe_audio_batch(
     abort_error = ""
     queue_full_log_at = 0.0
     network_errors = 0
+    #: 已转码待上传的临时音频：源文件 -> (上传文件, 临时目录)。
+    #: 队列满/网络重试时复用，避免重复提取；上传结束（成功或放弃）即删除。
+    prepared: Dict[str, Tuple[str, str]] = {}
+
+    def drop_prepared(source: str) -> None:
+        """删除某个源文件对应的临时音频及其临时目录（没有则忽略）。"""
+        _upload, temp = prepared.pop(source, ("", ""))
+        if temp:
+            shutil.rmtree(temp, ignore_errors=True)
 
     try:
         while pending or active:
@@ -590,23 +585,25 @@ def transcribe_audio_batch(
                     ),
                 )
 
-                upload_path = path
-                temp_dir = ""
-                if _needs_transcode(path):
-                    index = total - len(pending) + 1
-                    try:
-                        upload_path, temp_dir = _prepare_for_upload(
-                            ctx, path, index, total
-                        )
-                    except CancelledError:
-                        raise
-                    except Exception as exc:  # noqa: BLE001 - 单个文件转换失败不中断批次
-                        pending.pop(0)
-                        failed += 1
-                        detail = f"音频转换失败: {exc}"
-                        failures.append(f"{name}: {detail}")
-                        ctx.error(f"{name}: {detail}")
-                        continue
+                if path not in prepared:
+                    if _needs_transcode(path):
+                        index = total - len(pending) + 1
+                        try:
+                            prepared[path] = _prepare_for_upload(
+                                ctx, path, index, total
+                            )
+                        except CancelledError:
+                            raise
+                        except Exception as exc:  # noqa: BLE001 - 单个文件转换失败不中断批次
+                            pending.pop(0)
+                            failed += 1
+                            detail = f"音频转换失败: {exc}"
+                            failures.append(f"{name}: {detail}")
+                            ctx.error(f"{name}: {detail}")
+                            continue
+                    else:
+                        prepared[path] = (path, "")
+                upload_path = prepared[path][0]
 
                 try:
                     task_id, status_url = _create_remote_task(
@@ -621,7 +618,9 @@ def transcribe_audio_batch(
                                 "服务端队列已满（最多 5 个任务），"
                                 "等待空位后自动重试…"
                             )
+                        # 保留已转好的临时音频，稍后直接重传
                         break
+                    drop_prepared(path)
                     if exc.status == 400:
                         pending.pop(0)
                         failed += 1
@@ -645,11 +644,14 @@ def transcribe_audio_batch(
                     ctx.warn(
                         f"上传失败，稍后重试（{network_errors}/3）: {exc}"
                     )
+                    # 同样保留临时音频，重试时不必重新提取
                     break
-                finally:
-                    if temp_dir:
-                        shutil.rmtree(temp_dir, ignore_errors=True)
+                except BaseException:
+                    drop_prepared(path)
+                    raise
 
+                # 上传成功：临时音频已经没用了，立即删除
+                drop_prepared(path)
                 network_errors = 0
                 pending.pop(0)
                 task = _TaskState(
@@ -818,6 +820,10 @@ def transcribe_audio_batch(
     except ToolError as exc:
         abort_error = str(exc)
         ctx.error(abort_error)
+
+    # 取消/中止时可能有没来得及上传的临时音频，一并清掉
+    for source in list(prepared):
+        drop_prepared(source)
 
     unfinished = len(active)
     total_failed = failed + pre_failed

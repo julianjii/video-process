@@ -282,6 +282,27 @@ QCheckBox::indicator:checked {{
     image: none;
 }}
 
+QRadioButton {{
+    background: transparent;
+    color: {TEXT};
+    spacing: 8px;
+}}
+
+QRadioButton::indicator {{
+    width: 16px;
+    height: 16px;
+    border: 1px solid {BG_RAISED};
+    border-radius: 8px;
+    background: {BG_PANEL};
+}}
+
+QRadioButton::indicator:hover {{ border: 1px solid {ACCENT}; }}
+
+QRadioButton::indicator:checked {{
+    background: {ACCENT_DARK};
+    border: 1px solid {ACCENT};
+}}
+
 /* ---------- 按钮 ---------- */
 QPushButton {{
     background: {BG_RAISED};
